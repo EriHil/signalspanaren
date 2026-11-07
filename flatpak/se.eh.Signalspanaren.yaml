@@ -91,7 +91,7 @@ modules:
     build-commands:
       - install -d /app/share/signalspanaren
       - install -m644 signalspanaren.py avkodare.py adsb.py adsb_karta.py kartvy.py aktivitet.py
-        analys.py analysavkodare.py iqfil.py kiwisdr.py dspfilter.py flaggor.py webbmottagare.py signaldb.py frontpanel.py skarm.py MANUAL.txt /app/share/signalspanaren/
+        analys.py analysavkodare.py iqfil.py kiwisdr.py dspfilter.py flaggor.py webbmottagare.py signaldb.py ai.py frontpanel.py skarm.py MANUAL.txt /app/share/signalspanaren/
       - |
         cat > /app/bin/signalspanaren <<'EOF'
         #!/bin/sh

@@ -216,6 +216,7 @@ import ctypes.util
 import datetime
 import csv
 from collections import deque
+import ai
 
 try:
     import numpy as np
@@ -4420,6 +4421,11 @@ def run_gui(args):
             spar.set_tooltip_text("Spara hela klartextrutan (inklusive symboler) till en fil")
             spar.connect("clicked", lambda *_: self._spara_klartext())
             kh.append(spar)
+            self._fraga_btn = Gtk.Button()
+            self._fraga_btn.add_css_class("flat")
+            self._fraga_btn.connect("clicked", lambda *_: self._open_chat())
+            self._ai_knapp_uppdatera()
+            kh.append(self._fraga_btn)
             info.append(kh)
             self.textbuf = Gtk.TextBuffer()
             self.sym_mark = self.textbuf.create_mark("symboler", self.textbuf.get_end_iter(), False)
@@ -4962,6 +4968,215 @@ def run_gui(args):
                     self._logg_fil.close()
                 self._logg_fil = None
                 self.win.toast("Klartextloggen stoppad")
+
+        def _ai_cfg_sokv(self):
+            return os.path.join(CONF_DIR, "ai.json")
+
+        def _ai_knapp_uppdatera(self):
+            if ai.las_config(self._ai_cfg_sokv())["aktiv"]:
+                self._fraga_btn.set_label("🤖 Fråga AI")
+                self._fraga_btn.set_tooltip_text("Chatta med AI:n om den aktuella analysen")
+            else:
+                self._fraga_btn.set_label("🤖 AI av")
+                self._fraga_btn.set_tooltip_text("AI-chatten är avstängd. Klicka för att slå på den under inställningar.")
+
+        def _analys_text(self):
+            r = self.last or {}
+            buf = self.textbuf
+            klar = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+            txt = ai.sammanfattning(r, klar)
+            disp = getattr(self.win.view, "disp", None)
+            if r and disp is not None and r.get("f_abs"):
+                binhz = self.win.view.wf_span / FFT_N
+                k = int((r["f_abs"] - self.win.wf_center) / binhz + FFT_N / 2)
+                lo, hi = max(0, k - 200), min(FFT_N, k + 200)
+                if hi > lo:
+                    steg = np.linspace(lo, hi - 1, 64).astype(int)
+                    txt += "\nSpektrum (dB, 64 punkter runt signalen): " + " ".join(f"{disp[i]:.0f}" for i in steg)
+            if r.get("hist") is not None:
+                c, hs = r["hist"]
+                txt += "\nFrekvensfördelning (Hz:antal): " + " ".join(f"{x:.0f}:{y:.0f}" for x, y in list(zip(c, hs))[::4])
+            if r.get("kurva") is not None:
+                kv = np.asarray(r["kurva"], float)
+                txt += "\nEnvelop (senaste): " + " ".join(f"{v:.2f}" for v in kv[::max(1, len(kv) // 40)][-40:])
+            return txt
+
+        def _open_chat(self):
+            if not ai.las_config(self._ai_cfg_sokv())["aktiv"]:
+                self._open_ai_settings()
+                return
+            if getattr(self, "_chat_win", None) is not None:
+                self._chat_win.present()
+                return
+            self._chat_msgs, self._chat_busy = [], False
+            win = Adw.Window(title="AI-chatt – Signalspanaren", transient_for=self.win,
+                             default_width=560, default_height=680)
+            tv = Adw.ToolbarView()
+            hb = Adw.HeaderBar()
+            ins = Gtk.Button(icon_name="emblem-system-symbolic")
+            ins.set_tooltip_text("Inställningar för AI")
+            ins.connect("clicked", lambda *_: self._open_ai_settings())
+            hb.pack_end(ins)
+            tv.add_top_bar(hb)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
+            box.set_margin_top(8)
+            box.set_margin_bottom(8)
+            self._chat_info = Gtk.Label(xalign=0, wrap=True, css_classes=["dim-label"])
+            box.append(self._chat_info)
+            self._chat_buf = Gtk.TextBuffer()
+            ctv = Gtk.TextView(buffer=self._chat_buf, editable=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+            ctv.set_left_margin(6)
+            self._chat_sw = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+            self._chat_sw.set_child(ctv)
+            box.append(self._chat_sw)
+            self._bifoga = Gtk.CheckButton(label="Bifoga aktuell analys", active=True)
+            box.append(self._bifoga)
+            rad = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self._chat_in = Gtk.Entry(hexpand=True, placeholder_text="Skriv till AI:n …")
+            self._chat_in.connect("activate", lambda *_: self._chat_skicka())
+            rad.append(self._chat_in)
+            self._chat_send = Gtk.Button(label="Skicka")
+            self._chat_send.add_css_class("suggested-action")
+            self._chat_send.connect("clicked", lambda *_: self._chat_skicka())
+            rad.append(self._chat_send)
+            box.append(rad)
+            self._chat_spara = Gtk.Button(label="Spara i analysrutan")
+            self._chat_spara.add_css_class("suggested-action")
+            self._chat_spara.set_visible(False)
+            self._chat_spara.connect("clicked", lambda *_: self._chat_anvand())
+            box.append(self._chat_spara)
+            tv.set_content(box)
+            win.set_content(tv)
+            win.connect("close-request", lambda *_: win.set_visible(False) or True)
+            self._chat_win = win
+            self._chat_visa_info()
+            win.present()
+
+        def _chat_visa_info(self):
+            cfg = ai.las_config(self._ai_cfg_sokv())
+            if not cfg["aktiv"]:
+                txt = "AI-chatten är avstängd. Slå på den under inställningar (⚙)."
+            elif cfg["backend"] == "claude":
+                txt = f"Claude ({cfg['claude_modell'] or 'ingen modell vald'}) med din nyckel. Analysdata skickas till Anthropic."
+            else:
+                txt = f"Gratis online-AI ({cfg['gratis_modell']}). Ingen nyckel krävs."
+            self._chat_info.set_text(txt)
+
+        def _chat_rad(self, text):
+            self._chat_buf.insert(self._chat_buf.get_end_iter(), text + "\n\n")
+            adj = self._chat_sw.get_vadjustment()
+            GLib.idle_add(lambda: adj.set_value(adj.get_upper()) or False)
+
+        def _chat_skicka(self):
+            text = self._chat_in.get_text().strip()
+            if not text or self._chat_busy:
+                return
+            cfg = ai.las_config(self._ai_cfg_sokv())
+            if not cfg["aktiv"]:
+                self._chat_rad("(AI-chatten är avstängd. Slå på den under inställningar.)")
+                return
+            system = ai.systemprompt(self._analys_text() if self._bifoga.get_active() else None)
+            f_ref = (self.last or {}).get("f_abs")
+            self._chat_in.set_text("")
+            self._chat_busy = True
+            self._chat_send.set_sensitive(False)
+            self._chat_msgs.append({"role": "user", "content": text})
+            self._chat_rad("Du: " + text)
+            meddelanden = list(self._chat_msgs)
+
+            def arbeta():
+                try:
+                    svar = ai.svar(cfg, meddelanden, system)
+                except Exception as ex:
+                    svar = f"(fel: {ex})"
+                GLib.idle_add(self._chat_klart, svar or "(tomt svar)", f_ref)
+
+            threading.Thread(target=arbeta, daemon=True).start()
+
+        def _chat_klart(self, svar, f_ref=None):
+            self._chat_msgs.append({"role": "assistant", "content": svar})
+            self._chat_rad("AI: " + svar)
+            self._chat_busy = False
+            self._chat_send.set_sensitive(True)
+            self._chat_forslag = ai.forslag_ur(svar)
+            self._chat_forslag_f = f_ref
+            self._chat_spara.set_visible(bool(self._chat_forslag))
+            return False
+
+        def _chat_anvand(self):
+            """Kopierar AI:ns överenskomna förslag till analysrutan och sparar det som din klassning."""
+            f = getattr(self, "_chat_forslag", None)
+            r = self.last or {}
+            ref = getattr(self, "_chat_forslag_f", None)
+            if not f or not r.get("f_abs") or ref is None:
+                self.win.toast("Ingen analys att spara på ännu")
+                return
+            if abs(r["f_abs"] - ref) > max(500.0, (r.get("occ_bw") or 0) / 2):
+                self._chat_spara.set_visible(False)
+                self.win.toast("Analysen har bytts sedan frågan. Fråga AI:n igen.")
+                return
+            fl = getattr(self.win, "flaggor", None)
+            if fl is None:
+                return
+            namn = str(f.get("namn", "")).strip()[:60]
+            typ = str(f.get("typ", "")).strip()
+            anteckning = str(f.get("not", "")).strip()
+            op = self._operator_flagga(r)
+            if op is not None:
+                fl.andra(op["id"], namn=namn, typ=typ, **{"not": anteckning})
+            else:
+                fl.lagg_till(r["f_abs"], namn, lage=self.win.engine.mode, typ=typ, noter=anteckning, kalla="signaltyp")
+            self._kand_shown = {"namn": namn, "e": {"namn": namn, "kat": typ, "info": anteckning},
+                                "sc": None, "kalla": "vald"}
+            self._kand_hist.clear()
+            self._chat_spara.set_visible(False)
+            self._update_rows(r)
+            self._chat_rad(f"(sparat i analysrutan: {namn})")
+
+        def _open_ai_settings(self):
+            cfg = ai.las_config(self._ai_cfg_sokv())
+            win = Adw.Window(title="Inställningar för AI", transient_for=self.win, default_width=460)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            box.set_margin_start(12)
+            box.set_margin_end(12)
+            box.set_margin_top(12)
+            box.set_margin_bottom(12)
+            dd = Gtk.DropDown.new_from_strings(["Gratis online-AI (standard)", "Claude (egen API-nyckel)"])
+            dd.set_selected(1 if cfg["backend"] == "claude" else 0)
+            gratis = Gtk.Entry(text=cfg["gratis_modell"])
+            cmod = Gtk.Entry(text=cfg["claude_modell"], placeholder_text="modell-ID från ditt konto")
+            key = Gtk.Entry(text=cfg["api_key"], visibility=False, placeholder_text="API-nyckel")
+            info = Gtk.Label(xalign=0, wrap=True, css_classes=["dim-label"],
+                             label="Gratis-läget kräver ingen nyckel. Med Claude skickas analysdata till Anthropic.")
+            aktiv = Gtk.Switch(active=cfg["aktiv"], halign=Gtk.Align.START)
+            rad_aktiv = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            rad_aktiv.append(Gtk.Label(label="Använd AI-chatten", xalign=0, hexpand=True))
+            rad_aktiv.append(aktiv)
+            spara = Gtk.Button(label="Spara")
+            spara.add_css_class("suggested-action")
+
+            def _spara(*_):
+                ny = {"aktiv": aktiv.get_active(), "backend": "claude" if dd.get_selected() == 1 else "gratis",
+                      "gratis_modell": gratis.get_text().strip() or "openai",
+                      "claude_modell": cmod.get_text().strip(), "api_key": key.get_text().strip()}
+                ai.spara_config(self._ai_cfg_sokv(), ny)
+                self._ai_knapp_uppdatera()
+                if getattr(self, "_chat_win", None) is not None:
+                    self._chat_visa_info()
+                win.close()
+
+            spara.connect("clicked", _spara)
+            for w_ in (rad_aktiv, Gtk.Label(label="Leverantör", xalign=0), dd, Gtk.Label(label="Gratis modell", xalign=0), gratis,
+                       Gtk.Label(label="Claude-modell", xalign=0), cmod,
+                       Gtk.Label(label="API-nyckel (valfritt)", xalign=0), key, info, spara):
+                box.append(w_)
+            tv = Adw.ToolbarView()
+            tv.add_top_bar(Adw.HeaderBar())
+            tv.set_content(box)
+            win.set_content(tv)
+            win.present()
 
         def _show_symbols(self, r):
             """Ettor och nollor från senaste analyssteget, sist i klartextrutan. Ersätts vid varje steg."""

@@ -120,10 +120,27 @@ fi
 mkdir -p "$DEST" "$BIN" "$APPS" "$ICONS" "$STATE"
 install -m 755 "$SRC/signalspanaren.py" "$DEST/signalspanaren.py"
 install -m 644 "$SRC/avkodare.py" "$SRC/adsb.py" "$SRC/kartvy.py" "$SRC/aktivitet.py" "$SRC/analys.py" \
-  "$SRC/analysavkodare.py" "$SRC/iqfil.py" "$SRC/kiwisdr.py" "$SRC/dspfilter.py" "$SRC/flaggor.py" "$SRC/webbmottagare.py" "$SRC/signaldb.py" "$SRC/frontpanel.py" "$SRC/skarm.py" "$SRC/MANUAL.txt" "$DEST/"
+  "$SRC/analysavkodare.py" "$SRC/iqfil.py" "$SRC/kiwisdr.py" "$SRC/dspfilter.py" "$SRC/flaggor.py" "$SRC/webbmottagare.py" "$SRC/signaldb.py" "$SRC/ai.py" "$SRC/frontpanel.py" "$SRC/skarm.py" "$SRC/MANUAL.txt" "$DEST/"
 install -m 755 "$SRC/adsb_karta.py" "$DEST/adsb_karta.py"
 install -m 755 "$SRC/installera.sh" "$DEST/installera.sh"
 install -m 644 "$SRC/$APP_ID.svg" "$ICONS/$APP_ID.svg"
+
+# AI-chatten följer med som standard. Den som vill slippa den svarar nej (bara i terminal, första gången).
+if [ ! -e "$CONF/ai.json" ] && [ "$JA" = 0 ] && [ -t 0 ]; then
+  read -r -p "Använda AI-chatten? Den skickar bara det du skriver (och analysen, om du vill) till en AI-tjänst. [J/n] " svar || true
+  if [[ "$svar" =~ ^[Nn] ]]; then
+    mkdir -p "$CONF"
+    python3 - "$DEST" "$CONF/ai.json" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import ai
+cfg = ai.las_config(sys.argv[2])
+cfg["aktiv"] = False
+ai.spara_config(sys.argv[2], cfg)
+PY
+    gul "AI-chatten är avstängd. Slå på den under Inställningar för AI i programmet."
+  fi
+fi
 
 cat > "$BIN/signalspanaren" <<'EOF'
 #!/bin/sh
