@@ -14,6 +14,8 @@
   - **Högerklicka utan att dra** för att lägga till en flagga, ändra eller ta bort den, eller dölja en av Kiwins. Högerdrag flyttar fortfarande vattenfallet.
   - **Egna flaggor** sparas i `~/.config/signalspanaren/flaggor.json` och visas oavsett källa. En ändrad Kiwi-flagga sparas som en egen kopia, eftersom Kiwins databas kräver ägarens lösenord.
   - Sektionen **Flaggor** i sidopanelen har visa/dölj, hämtning av Kiwins flaggor och "Ny flagga på inställd frekvens".
+- **Analysen säger "osäker" i stället för att gissa.** Varje klassning får ett säkerhetsmått (0–100 %). Hälften väger hur stabil signalfamiljen är över de senaste mätningarna, 30 % SNR och 20 % hur väl förslaget ur databasen passar. Säkra bevis höjer måttet: FT8/FT4-detektorn, ett låst förslag med hög poäng eller text från en avkodare. Under 55 % visas "Osäker – klassa själv". Analysens bästa gissning står kvar i liten text, och mätvärdena visas som vanligt.
+- **Klassa själv:** knappen "🚩 Klassa själv …" i signalanalysen sparar din bedömning som en flagga på frekvensen. Formuläret är förifyllt med frekvens, läge och analysens gissning. Därefter visar analysen din klassning som signaltyp och sin egen gissning bredvid.
 - **Hopfällbara sektioner i sidopanelen:** klicka på en rubrik för att fälla ihop eller fälla ut den. Läget sparas.
 - **Fyra nya facit-klipp med riktigt tal:** Shannon VOLMET 5505 kHz USB, 40 m LSB (svag), samt en tysk och en finsk station på 80 m. Signalfamiljen blir rätt på 42 av 42 klipp. STANAG 4285, PSK och FT8 känns igen som förut.
 

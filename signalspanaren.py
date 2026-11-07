@@ -4322,6 +4322,13 @@ def run_gui(args):
             self.kand.add_css_class("analys-ram")
             self.kand.set_markup("<b>Signaltyp</b>\n–")
             typbox.append(self.kand)
+            self.klassa_btn = Gtk.Button(label="🚩 Klassa själv …", halign=Gtk.Align.START)
+            self.klassa_btn.set_tooltip_text("Spara din egen bedömning som en flagga på frekvensen – den visas sedan "
+                                             "som signaltyp i stället för analysens gissning")
+            self.klassa_btn.add_css_class("flat")
+            self.klassa_btn.connect("clicked", lambda *_: self._klassa_sjalv())
+            self.klassa_btn.set_visible(False)
+            typbox.append(self.klassa_btn)
             self.alt = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
             self.alt.add_css_class("analys-ram")
             self.alt_exp = Gtk.Expander(label="Andra möjliga")
@@ -4623,7 +4630,31 @@ def run_gui(args):
                     return "Digital – klartextprotokoll (avkodare för typen saknas än)"
             return "Digital – innehåll okänt" if fam not in ("BRUS", None) else None
 
+        FAM_TILL_TYP = {"SSB": "Tal", "AM": "Rundradio", "FM": "Tal", "OOK": "Amatör", "BÄRVÅG": "Övrigt"}
+
+        def _operator_flagga(self, r):
+            """En egen flagga på signalens frekvens (operatörens klassning) eller None."""
+            fl = getattr(self.win, "flaggor", None)
+            if fl is None or not r or not r.get("f_abs"):
+                return None
+            tol = max(300.0, (r.get("occ_bw") or 0) / 2)
+            nara = [x for x in fl.egna if x.get("kalla") != "dold" and abs(x["f"] - r["f_abs"]) <= tol]
+            return min(nara, key=lambda x: abs(x["f"] - r["f_abs"])) if nara else None
+
+        def _klassa_sjalv(self):
+            r = getattr(self, "last", None) or {}
+            f = r.get("f_abs") or self.win.freq
+            k = r.get("kandidat")
+            namn = (k[1].get("namn") if k and not r.get("osaker") else "") or ""
+            typ = self.FAM_TILL_TYP.get(r.get("fam"), "Data")
+            self.win.flagg_dialog(None, f, forslag={"namn": namn, "typ": typ, "lage": self.win.engine.mode,
+                                                    "not": f"analys: {r.get('klass', '')}, {r.get('occ_bw') or 0:.0f} Hz"})
+
         def _update_rows(self, r):
+            self.klassa_btn.set_visible(bool(r and r.get("fam") not in (None, "BRUS")))
+            op = self._operator_flagga(r)
+            if op is not None and r and r.get("fam") not in (None,):
+                self._set("klass", f"{op['namn']} (din klassning)")
             if not r or r.get("fam") in (None, "BRUS"):
                 for key, _t in self.ROWS:
                     self._set(key, None)
@@ -4634,7 +4665,13 @@ def run_gui(args):
                 self.alt_exp.set_visible(False)
                 return
             fam = r["fam"]
-            self._set("klass", r["klass"])
+            sak = r.get("sakerhet")
+            if op is not None:
+                self._set("klass", f"{op['namn']} (din klassning) – analysen: {r['klass']}")
+            elif r.get("osaker"):
+                self._set("klass", f"Osäker – klassa själv (kanske {r['klass']}, {sak * 100:.0f} %)")
+            else:
+                self._set("klass", r["klass"] + (f" ({sak * 100:.0f} % säker)" if sak is not None else ""))
             self._set("freq", f"{fmt_mhz(r['f_abs'])} MHz")
             self._set("avv", _fmt_hz(r.get("f_mid"), True))
             self._set("snr", f"{r.get('snr', 0):.1f} dB (topp {r.get('peak_snr', 0):.0f})")
@@ -4671,6 +4708,16 @@ def run_gui(args):
             pick = r.get("kandidat") or (k[0] if k else None)
             locked = bool(r.get("kandidat_las"))
             lines = [f"<b>Signaltyp{' (låst)' if locked else ' (trolig)'}</b>"]
+            if op is not None:
+                lines = [f"<b>Signaltyp – din klassning</b>",
+                         f"🚩 <b>{GLib.markup_escape_text(op['namn'])}</b> "
+                         f"<span alpha='70%'>{GLib.markup_escape_text(op.get('typ', ''))}</span>",
+                         "<span size='small' alpha='75%'>Analysens förslag:</span>"]
+            elif r.get("osaker"):
+                lines = ["<b>Signaltyp – osäker</b>",
+                         "<span size='small' alpha='80%'>Analysen är inte säker nog att klassa signalen. Lyssna och "
+                         "använd mätvärdena – och spara din bedömning med <i>Klassa själv</i>.</span>",
+                         "<span size='small' alpha='60%'>Kanske:</span>"]
             if pick is None:
                 lines.append("<span alpha='60%'>ingen känd typ passar</span>")
             else:
@@ -5604,6 +5651,12 @@ def run_gui(args):
         # ── flaggor ──
         def _flaggor_andrade(self):
             self.view.queue_draw()
+            ap = getattr(self, "an_panel", None)
+            if ap is not None and getattr(ap, "last", None):
+                try:
+                    ap._update_rows(ap.last)
+                except Exception:
+                    log.exception("Kunde inte uppdatera analysen efter flaggändring")
             r = getattr(self, "flagg_status_row", None)
             if r is not None:
                 fl = self.flaggor
@@ -5659,8 +5712,9 @@ def run_gui(args):
             pop.connect("closed", lambda p_: p_.unparent())
             pop.popup()
 
-        def flagg_dialog(self, fl, f_hz):
-            """Lägg till (fl=None) eller ändra en flagga. En ändrad Kiwi-flagga sparas som egen kopia."""
+        def flagg_dialog(self, fl, f_hz, forslag=None):
+            """Lägg till (fl=None) eller ändra en flagga. En ändrad Kiwi-flagga sparas som egen kopia.
+            forslag: förifyllda värden för en ny flagga (t.ex. från signalanalysen)."""
             ny = fl is None
             egen = bool(fl and fl.get("_egen"))
             win = Adw.Window(title="Ny flagga" if ny else "Ändra flagga", modal=True, transient_for=self,
@@ -5674,24 +5728,25 @@ def run_gui(args):
             if fl and not egen:
                 g.set_description("Kiwins flagga ändras inte på Kiwin – ändringen sparas som din egen flagga "
                                   "som visas i stället för Kiwins.")
+            fv = fl or forslag or {}
             namn = Adw.EntryRow(title="Namn")
-            namn.set_text((fl or {}).get("namn", ""))
+            namn.set_text(fv.get("namn", ""))
             g.add(namn)
             frek = Adw.EntryRow(title="Frekvens (kHz)")
             frek.set_text(f"{float(f_hz) / 1e3:.3f}")
             g.add(frek)
             lagen = flaggor.LAGEN
-            cur_l = (fl or {}).get("lage") or self.engine.mode
+            cur_l = fv.get("lage") or self.engine.mode
             lage = Adw.ComboRow(title="Läge", model=Gtk.StringList.new(lagen))
             lage.set_selected(lagen.index(cur_l) if cur_l in lagen else 0)
             g.add(lage)
             typer = flaggor.TYPER
-            cur_t = flaggor.typ_for(fl) if fl else "Övrigt"
+            cur_t = flaggor.typ_for(fv) if fv else "Övrigt"
             typ = Adw.ComboRow(title="Typ", model=Gtk.StringList.new(typer))
             typ.set_selected(typer.index(cur_t) if cur_t in typer else len(typer) - 1)
             g.add(typ)
             noter = Adw.EntryRow(title="Anteckning")
-            noter.set_text((fl or {}).get("not", ""))
+            noter.set_text(fv.get("not", ""))
             g.add(noter)
             tider = Adw.EntryRow(title="Sänder (UTC hhmm–hhmm)")
             tider.set_text(f"{int((fl or {}).get('b', 0)):04d}-{int((fl or {}).get('e', 2400)):04d}")

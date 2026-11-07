@@ -1435,6 +1435,34 @@ class Analyzer:
                     feat["ram_minne"] = True
         return feat
 
+    OSAKER_GRANS = 0.55
+
+    def _sakerhet(self, feat):
+        """Hur säker klassningen är (0–1): stabil familj över de senaste stegen (50 %), SNR (30 %) och hur
+        väl förslaget ur databasen passar (20 %). Under OSAKER_GRANS visas "osäker" och operatören får klassa."""
+        fam = feat.get("fam")
+        if fam in (None, "BRUS"):
+            feat["sakerhet"], feat["osaker"] = None, False
+            return
+        hist = list(self._fam_hist)
+        stab = sum(1 for x in hist if x == fam) / max(1, len(hist))
+        snr_f = min(1.0, max(0.0, ((feat.get("snr") or 0.0) - 3.0) / 12.0))
+        k = feat.get("kandidat")
+        kand_f = min(1.0, k[0] / 100.0) if k else 0.5
+        s = 0.5 * stab + 0.3 * snr_f + 0.2 * kand_f
+        # starka bevis utöver familjens stabilitet: FT8/FT4-detektorn (symboltakt och tonraster stämmer),
+        # ett låst förslag med hög poäng, eller en avkodare som får ut text
+        if feat.get("lagbaud"):
+            s = max(s, 0.85)
+        if feat.get("kandidat_las") and k and k[0] >= 80:
+            s = max(s, 0.7)
+        if feat.get("avk_varden"):
+            s = max(s, 0.75)
+        if fam == "OKÄND":
+            s = min(s, 0.3)
+        feat["sakerhet"] = round(s, 3)
+        feat["osaker"] = s < self.OSAKER_GRANS
+
     def _stabil_familj(self, feat):
         """Byter feat["fam"]/["klass"] till den stabila familjen (hysteres mot hopp mellan mätningar)."""
         raw = feat.get("fam")
@@ -1660,6 +1688,7 @@ class Analyzer:
         if feat.get("fakta_fran"):
             feat["kandidater"] = signaldb.match(feat, f_abs, self.db, ac)
         self._lock_candidate(feat, feat.get("kandidater") or [], now)
+        self._sakerhet(feat)
         self.result = feat
         self.result_id += 1
         return feat, new
