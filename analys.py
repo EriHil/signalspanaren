@@ -1516,9 +1516,9 @@ class Analyzer:
         if auto:
             cap = min(self.FIT_MAX_SURVEY, self.tap.sr * 0.9)
             survey = float(np.clip(max(bw * 3.0, self.FIT_MIN_SURVEY), 1000.0, cap))
-            self.fit = {"state": "survey", "guess": float(bw), "survey": survey, "tries": 0,
+            # snabbt resultat med gissningen först; bandbreddsmätningen startar när det har visats
+            self.fit = {"state": "prelim", "guess": float(bw), "survey": survey, "tries": 0,
                         "cap": cap, "result": None}
-            bw = survey
         self.tap.set_target(f, bw)
         self.result = None
         self.result_id += 1
@@ -1714,6 +1714,9 @@ class Analyzer:
                  ", ".join(passar_namn) or "–", ", ".join(kord) or "–", len(new))
         self.result = feat
         self.result_id += 1
+        if self.fit and self.fit.get("state") == "prelim":
+            self.fit["state"] = "survey"
+            self.tap.set_target(tgt, self.fit["survey"])
         return feat, new
 
     def _loop(self):

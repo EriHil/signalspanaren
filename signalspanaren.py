@@ -4604,7 +4604,7 @@ def run_gui(args):
                 return
             self._title_tap = key
             f = tap.target
-            if ft and ft["state"] == "survey":
+            if ft and ft["state"] in ("prelim", "survey"):
                 bwtxt = "<span alpha='60%'>mäter bandbredd …</span>"
             elif ft and ft.get("width"):
                 bwtxt = f"{_fmt_hz(ft['width'])} <span alpha='60%'>(uppmätt)</span>"
