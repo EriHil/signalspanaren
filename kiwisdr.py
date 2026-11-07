@@ -391,6 +391,7 @@ class KiwiSource:
         self.rs = None
         self.narrow_rate = 12000.0
         self._pending = {}
+        self._sparad = {}
         self._plock = threading.Lock()
         self._nvar = None
         self._nmask = None
@@ -413,6 +414,8 @@ class KiwiSource:
 
     def open(self):
         p = self._take()
+        self._sparad.update(p)
+        p = dict(self._sparad)
         c = KiwiClient(self.addr, self.ident)
         c.freq = self.center
         if "ppm" in p:
@@ -444,6 +447,7 @@ class KiwiSource:
         self._rlock = threading.Lock()
 
     def _apply(self, p):
+        self._sparad.update(p)
         c = self.cli
         if "gain" in p:
             c.set_gain(p["gain"])

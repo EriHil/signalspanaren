@@ -172,6 +172,15 @@ class Flaggor:
         self._andrat()
         threading.Thread(target=self._hamta, args=(nyckel, addr), name="KiwiFlaggor", daemon=True).start()
 
+    def vanta_pa_hamtning(self, nyckel, timeout=70.0):
+        """Väntar tills flagghämtningen för Kiwin är klar, så att ljudkanalen inte öppnas samtidigt."""
+        slut = time.monotonic() + timeout
+        vantade = nyckel in self._hamtar
+        while nyckel in self._hamtar and time.monotonic() < slut:
+            time.sleep(0.2)
+        if vantade:
+            time.sleep(5)     # KiwiSDR tar inte emot ljudet direkt efter flaggkanalen (sett i test)
+
     def _hamta(self, nyckel, addr):
         import kiwisdr
         try:

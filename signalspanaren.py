@@ -1021,8 +1021,12 @@ def open_iq_reader(conf):
 class KiwiSource(kiwisdr.KiwiSource):
     """KiwiSDR-källan med programmets felklass (SourceError visas som meddelande)."""
 
+    vanta_flaggor = None         # väntar på flagghämtningen innan ljudkanalen öppnas
+
     def open(self):
         try:
+            if self.vanta_flaggor:
+                self.vanta_flaggor()
             super().open()
         except kiwisdr.KiwiError as e:
             raise SourceError(str(e))
@@ -1331,24 +1335,38 @@ class Engine:
     # ── huvudloop ──
     def _run(self):
         src = self.source
+        forsok, t_upp, uppkopplad = 0, None, False
         try:
-            src.open()
-            log.info("Mottagning startad (%s, inställd %.4f MHz, mitt %.4f MHz)", src.name,
-                     (self.center + self.offset) / 1e6, self.center / 1e6)
-            while self.running:
-                r = src.read()
-                if r is None:
-                    continue
-                t0 = time.perf_counter()
-                self._process(*r)
-                dt = (time.perf_counter() - t0) * 1000
-                st = self.stats
-                st["blocks"] += 1
-                st["proc_ms"] = st["proc_ms"] * 0.95 + dt * 0.05
-                if dt > BLOCK / SR * 1000:
-                    st["overruns"] += 1
-                    if st["overruns"] % 50 == 1:
-                        log.warning("DSP hinner inte med (%.1f ms per block, max %.1f)", dt, BLOCK / SR * 1000)
+            while True:
+                try:
+                    src.open()
+                    t_upp, uppkopplad = time.monotonic(), True
+                    log.info("Mottagning startad (%s, inställd %.4f MHz, mitt %.4f MHz)", src.name,
+                             (self.center + self.offset) / 1e6, self.center / 1e6)
+                    if forsok:
+                        self._meddela("kiwi_status", "Återansluten till KiwiSDR")
+                    self._lasa(src)
+                    break
+                except SourceError as e:
+                    if not (uppkopplad and isinstance(src, KiwiSource)) or not self.running:
+                        raise
+                    if t_upp is not None:
+                        if time.monotonic() - t_upp > 30:
+                            forsok = 0
+                        t_upp = None
+                    forsok += 1
+                    if forsok > 3:
+                        raise SourceError(f"Kunde inte återansluta till KiwiSDR efter tre försök ({e})")
+                    vantan = (5, 15, 30)[forsok - 1]
+                    log.warning("KiwiSDR tappades (%s) – återansluter om %d s (försök %d av 3)", e, vantan, forsok)
+                    self._meddela("kiwi_status", f"KiwiSDR tappades – återansluter om {vantan} s")
+                    try:
+                        src.close()
+                    except Exception:
+                        pass
+                    self._vanta_atergang(vantan)
+                    if not self.running:
+                        break
         except EOFError:
             log.info("Uppspelningen nådde slutet av filen")
             if self.on_event:
@@ -1372,6 +1390,31 @@ class Engine:
             log.info("Mottagning stoppad")
             if self.on_stopped:
                 self.on_stopped()
+
+    def _lasa(self, src):
+        while self.running:
+            r = src.read()
+            if r is None:
+                continue
+            t0 = time.perf_counter()
+            self._process(*r)
+            dt = (time.perf_counter() - t0) * 1000
+            st = self.stats
+            st["blocks"] += 1
+            st["proc_ms"] = st["proc_ms"] * 0.95 + dt * 0.05
+            if dt > BLOCK / SR * 1000:
+                st["overruns"] += 1
+                if st["overruns"] % 50 == 1:
+                    log.warning("DSP hinner inte med (%.1f ms per block, max %.1f)", dt, BLOCK / SR * 1000)
+
+    def _vanta_atergang(self, sek):
+        slut = time.monotonic() + sek
+        while self.running and time.monotonic() < slut:
+            time.sleep(0.2)
+
+    def _meddela(self, kind, val):
+        if self.on_event:
+            self.on_event(kind, val)
 
     def _zoom_line(self, x, c):
         """Zoom-FFT: blanda ner visningsfönstret, decimera och gör FFT med finare upplösning.
@@ -7110,12 +7153,14 @@ def run_gui(args):
                     self.play_pause_btn.set_icon_name("media-playback-pause-symbolic")
                 self.audio.start()
                 self._auto_level_pending = True
-                e.start(src)
-                self._check_sideband()                       # sparat läge kan vara fel sidband här
                 if isinstance(src, KiwiSource) and self.conf.get("flaggor_kiwi", True):
-                    self.flaggor.satt_kiwi(webbmottagare.norm_url(src.addr), src.addr)
+                    nyckel = webbmottagare.norm_url(src.addr)
+                    self.flaggor.satt_kiwi(nyckel, src.addr)
+                    src.vanta_flaggor = lambda: self.flaggor.vanta_pa_hamtning(nyckel)
                 else:
                     self.flaggor.satt_kiwi(None, None)
+                e.start(src)
+                self._check_sideband()                       # sparat läge kan vara fel sidband här
                 btn.set_label("■ Stoppa")
                 btn.remove_css_class("suggested-action")
                 btn.add_css_class("destructive-action")
@@ -7153,6 +7198,8 @@ def run_gui(args):
                 self.toast("Uppspelningen är klar")
                 if self.btn_start.get_active():
                     self.btn_start.set_active(False)
+            elif kind == "kiwi_status":
+                self.toast(val, timeout=8)
             elif kind == "iq_error":
                 self.iq_btn.set_title("Starta IQ-inspelning")
                 self.toast(f"IQ-inspelningen stoppades: {val}", timeout=8)
