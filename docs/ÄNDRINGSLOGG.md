@@ -7,6 +7,9 @@
   - Ingen identitet går till GitHub.
   - När majoriteten av användarna över tid är överens om en klassning, införs den i signaldatabasen automatiskt.
   - Gränser för antal användare och tid bestäms när det byggs.
+  - Öppna frågor: om ändringarna granskas innan de införs, och vilken tjänst som tar emot klassningarna.
+- [ ] **Låst signaltyp.** Procenten visas som den var när typen låstes och uppdateras inte. Avgör om den ska följa analysen.
+- [ ] **AI-chatten.** Verifiera analystexten (histogram och envelop) på en riktig signal. Testat bara med syntetisk data.
 
 ## 2.12.1 (2026-11-07, ej släppt)
 
