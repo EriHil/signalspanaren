@@ -729,7 +729,7 @@ class PanelDisplay(Gtk.DrawingArea):
         cr.set_source_rgba(.66, .82, .95, .82)
         cr.move_to(46, fy + 34)
         cr.show_text(f"BW {self.main.engine.bw / 1000:.1f}k   STEP {step / 1000:g}k   AGC "
-                     f"{'AUTO' if self.main.conf.get('auto_gain') else 'MAN'}")
+                     f"{'AUTO' if self.main.gain_state()[0] else 'MAN'}")
         # S-meter
         self._meter(cr, 13, fy + 46, min(left_w - 22, 330), 9, accent)
 
@@ -752,7 +752,7 @@ class PanelDisplay(Gtk.DrawingArea):
                 ("Skanner", "aktiv" if getattr(self.main.scanner, "active", False) else "av"),
                 ("Squelch", f"{self.main.engine.squelch:.0f} dB"),
                 ("Volym", f"{c.get('volume', 80)} %"),
-                ("Förstärkning", "AGC" if c.get("auto_gain") else f"{c.get('gain', 0):.1f} dB"),
+                ("Förstärkning", "AGC" if self.main.gain_state()[0] else f"{self.main.gain_state()[1]:.1f} dB"),
             ]
             for i, (k, v) in enumerate(lines):
                 yy = by + 15 + i * 15
@@ -1383,7 +1383,7 @@ class FrontPanel(Adw.Window):
                 b.remove_css_class("on")
         states = ((getattr(self, "scan_btn", None), getattr(m.scanner, "active", False)),
                   (getattr(self, "rec_btn", None), m.btn_rec.get_active()),
-                  (getattr(self, "agc_btn", None), bool(m.conf.get("auto_gain"))),
+                  (getattr(self, "agc_btn", None), m.gain_state()[0]),
                   (getattr(self, "scope_btn", None), self.scope_on),
                   (getattr(self, "lock_btn", None), self.locked),
                   (getattr(self, "power_btn", None), m.engine.running),
@@ -1421,7 +1421,7 @@ class FrontPanel(Adw.Window):
             return False
         try:
             c = self.main.conf
-            vals = {"vol": c.get("volume", 80), "sql": c.get("squelch", -150.0), "rf": c.get("gain", 0),
+            vals = {"vol": c.get("volume", 80), "sql": c.get("squelch", -150.0), "rf": self.main.gain_state()[1],
                     "dwell": c.get("scan_dwell_ms", 300), "hold": c.get("scan_hold", 2.0),
                     "snr": c.get("scan_snr", 10.0), "step": c.get("scan_step_khz", 12.5)}
             for key, k in self._knobs.items():
@@ -1574,7 +1574,7 @@ class FrontPanel(Adw.Window):
         knobs.append(self._knob("sql", "SQL", -150, 0, c.get("squelch", -150),
                                 lambda v: self.main.panel_set_squelch(v), fmt="{:.0f}", step=1,
                                 accent=(.36, .80, 1.0)))
-        knobs.append(self._knob("rf", "RF", 0, 49.6, c.get("gain", 30),
+        knobs.append(self._knob("rf", "RF", 0, self.main.gain_max(), self.main.gain_state()[1],
                                 lambda v: self.main.panel_set_gain(v), fmt="{:.1f}", step=.5,
                                 accent=(.36, .80, 1.0)))
         right.append(knobs)
@@ -1669,7 +1669,7 @@ class FrontPanel(Adw.Window):
         knobs.append(self._knob("sql", "SQL", -150, 0, c.get("squelch", -150),
                                 lambda v: self.main.panel_set_squelch(v), fmt="{:.0f}", step=1,
                                 dark=True, accent=(.55, 1.0, .60)))
-        knobs.append(self._knob("rf", "RF", 0, 49.6, c.get("gain", 30),
+        knobs.append(self._knob("rf", "RF", 0, self.main.gain_max(), self.main.gain_state()[1],
                                 lambda v: self.main.panel_set_gain(v), fmt="{:.1f}", step=.5,
                                 dark=True, accent=(.55, 1.0, .60)))
         knobs.append(self._knob("vol", "AF", 0, 300, c.get("volume", 80),

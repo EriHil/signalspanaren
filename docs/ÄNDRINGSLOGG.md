@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 2.11.0 (2026-11-07)
+
+- **Automatiskt sidband.** I USB/LSB byter programmet sidband när du stämmer till ett annat område. LSB används för tal på 160, 80 och 40 m. USB används på 30 m och uppåt, på 60 m, i FT8- och dataområdena (t.ex. 7,040–7,050 och 7,070–7,080 MHz) och på flyg, sjöfart och VOLMET. Ett sidband du valt själv gäller tills du lämnar området. Bokmärken och skannern behåller sitt sparade läge, och den valda bandbredden behålls. Kan stängas av under Demodulator → Automatiskt sidband.
+- **KiwiSDR har egen förstärkning.** Den använder Kiwins egen AGC som standard. Manuellt går skalan 0–120 dB (förval 65), skild från dongelns 0–49,6. Förut skickades dongelns värde till Kiwin, vilket gav väldigt svag IQ (ca 0,05 % av fullt utslag mot ca 10 % med Kiwins AGC). Frontpanelens RF-ratt följer den valda källan.
+- **Squelch i SSB och CW** håller öppet ca 1 s efter att signalen försvunnit, i stället för 0,25 s, så att stavelser och ord inte klipps.
+
 ## 2.10.2 (2026-11-07)
 
 - **Ny AGC för AM, SSB och CW, som i SDR++.** Den gamla AGC:n satte förstärkningen i trappsteg var 5:e ms. Den drog ned direkt på varje topp och tog upp bruset med ca 6 dB i varje paus. Den nya följer nivån mjukt (attack τ ≈ 20 ms, decay τ ≈ 200 ms) och har klippskydd som tittar framåt i blocket. Förstärkningen ändras per sampel. Mätt på riktig LSB-trafik via KiwiSDR: skillnaden mellan tal och pauser är 13 dB, som i signalen, i stället för 6–7 dB. Klick och surr (energi över 3,5 kHz) är 11 dB lägre. Resultatet ligger inom 1 dB från en återskapad SDR++-kedja. Ljudet är ca 6 dB svagare än förut, så höj volymen vid behov.

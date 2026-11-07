@@ -336,6 +336,15 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   korrigeringen för just den Kiwin (en decimal). RTL-dongelns ppm påverkas
   inte. Mät mot RWM 9,996 MHz.
 
+ Sidband (USB/LSB)
+  Tal på 160, 80 och 40 m går på LSB, allt annat på USB (30 m och uppåt, 60 m,
+  FT8/data, flyg, sjöfart). Med Demodulator → "Automatiskt sidband" (på som
+  standard) byter programmet själv när du stämmer till ett annat område. Ett
+  sidband du väljer själv gäller tills du lämnar området. Låter talet som
+  Kalle Anka eller obegripligt är det nästan alltid fel sidband.
+  AGC attack/decay fungerar som i SDR++ (standard 50 och 5). Lägre decay ger
+  mindre brus mellan orden.
+
  HF (kortvåg, under 28 MHz)
   Välj Direktsampling → "Q-gren" i sidopanelen (fungerar på NESDR SMArt v5 och
   RTL-SDR v3; I-grenen är mycket sämre över 9 MHz). RTL-SDR v4 klarar HF utan.

@@ -29,7 +29,7 @@ import atexit
 
 APP_NAME = "Signalspanaren"
 APP_ID = "se.eh.Signalspanaren"
-VERSION = "2.10.2"
+VERSION = "2.11.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "signalspanaren")
@@ -254,6 +254,25 @@ FILTER_STEPS = {
     "LSB": [1500, 1800, 2100, 2400, 2700, 3000, 3300],
     "CW": [250, 500, 750, 1000, 1500, 2400],
 }
+# Sidband för SSB: LSB är brukligt för tal på amatörbanden under 10 MHz (160/80/40 m), utom i
+# smalbandiga data-/FT8-delar och på 60 m. Allt annat – 30 m och uppåt, flyg, sjöfart, militärt,
+# VOLMET – kör USB. (start, stopp, zon) i Hz; första träffen gäller.
+SSB_ZONES = [
+    (1.836e6, 1.843e6, "data160", "USB"), (1.810e6, 2.000e6, "ham160", "LSB"),
+    (3.570e6, 3.600e6, "data80", "USB"), (3.500e6, 3.800e6, "ham80", "LSB"),
+    (7.040e6, 7.050e6, "data40", "USB"), (7.070e6, 7.080e6, "ft8_40", "USB"),
+    (7.000e6, 7.200e6, "ham40", "LSB"),
+]
+
+
+def ssb_zone(f):
+    """(sidband, zon) för frekvensen f."""
+    for a, b, zon, side in SSB_ZONES:
+        if a <= f < b:
+            return side, zon
+    return "USB", "usb"
+
+
 DEFAULT_STEP = {"WFM": 100000, "NFM": 12500, "AM": 5000, "USB": 100, "LSB": 100, "CW": 10}
 STEPS = [0, 10, 100, 1000, 5000, 9000, 10000, 12500, 25000, 100000]
 STEP_NAMES = ["Auto", "10 Hz", "100 Hz", "1 kHz", "5 kHz", "9 kHz", "10 kHz", "12,5 kHz", "25 kHz", "100 kHz"]
@@ -314,6 +333,7 @@ BOOKMARK_VERSION = 2
 DEFAULT_CONF = {
     "source": "rtl", "tcp_addr": "127.0.0.1:1234", "kiwi_addr": "", "webrx_own": [], "my_pos": "", "auto_gain": True, "gain": 30.0, "ppm": 0,
     "agc_attack": 50.0, "agc_decay": 5.0,
+    "kiwi_auto_gain": True, "kiwi_gain": 65.0, "auto_sideband": True,
     "direct": 0, "biast": False, "freq": 100.0e6, "mode": "WFM", "bw": None, "squelch": -150.0,
     "volume": 80, "step_idx": 0, "db_min": -100.0, "db_max": -20.0, "zoom": 1, "spec_frac": 0.35,
     "colormap": "spanare", "theme": 0, "skin": "spanare", "analys_bw_idx": 0, "analys_follow": False, "scan_mode": 0, "scan_start": "144.0", "scan_stop": "146.0",
@@ -1450,7 +1470,8 @@ class Engine:
             self._sq_hang = 0
         elif self.level < self.squelch - 2:
             self._sq_hang += 1
-            if self._sq_hang > 6:
+            # SSB/CW har ingen bärvåg: nivån faller mellan stavelser och ord – håll öppet ca 1 s
+            if self._sq_hang > (23 if mode in ("USB", "LSB", "CW") else 6):
                 self.sq_open = False
 
         # Detektor (varannan block)
@@ -4953,6 +4974,10 @@ def run_gui(args):
                        "Hur snabbt ljudet återhämtar sig – lägre = mindre brus mellan orden (SDR++: 5)")
             self.step_row = self._combo(g, "Frekvenssteg", STEP_NAMES, c["step_idx"],
                                         lambda i: self._set_conf("step_idx", i))
+            self._switch(g, "Automatiskt sidband", c.get("auto_sideband", True),
+                         lambda v: self._set_conf("auto_sideband", v)).set_tooltip_text(
+                "I USB/LSB: byt till LSB på 160/80/40 m (tal) och USB annars (30 m och uppåt, 60 m, FT8/data, "
+                "flyg, sjöfart) när du stämmer till ett annat område. Ett handvalt sidband gäller tills du lämnar området.")
             box.append(g)
 
             g = self._section("Visning")
@@ -5370,12 +5395,31 @@ def run_gui(args):
                 self.toast("Direktsampling är på – den tar bara emot under 28,8 MHz. Stäng av den för VHF/UHF.")
             elif not self.conf.get("direct") and freq < 24e6 <= self.freq:
                 self.toast("Under 24 MHz behövs direktsampling (Mottagare → Direktsampling → Q-gren)")
+            if not mode and e.mode in ("USB", "LSB") and self.conf.get("auto_sideband", True) \
+                    and not getattr(self.scanner, "active", False):
+                side, zon = ssb_zone(freq)
+                if getattr(self, "_ssb_manual_zone", None) != zon:
+                    self._ssb_manual_zone = None             # handvalt sidband gäller bara i sin zon
+                    if side != e.mode:
+                        bw = e.bw
+                        mode = side
+                        GLib.idle_add(lambda s=side: self.toast(
+                            f"{s} – brukligt här" + (" (tal under 10 MHz)" if s == "LSB" else "")) or False)
+                        self._ssb_keep_bw = bw
             if mode and mode in MODES and mode != e.mode:
                 self._in_tune = True
                 try:
                     self.set_mode(mode)
+                    kb = getattr(self, "_ssb_keep_bw", None)
+                    if kb and mode in ("USB", "LSB"):         # USB<->LSB: behåll vald bandbredd
+                        e.bw = kb
+                        self.conf["bw"] = kb
+                        self._updating = True
+                        self.bw_row.set_value(kb)
+                        self._updating = False
                 finally:
                     self._in_tune = False
+                    self._ssb_keep_bw = None
             d = freq - e.center
             ok_offset = abs(d) <= SR * 0.42 and abs(d) >= e.bw / 2 + 3000
             if e.running and getattr(e.source, "fixed_center", False):
@@ -5445,6 +5489,9 @@ def run_gui(args):
             self.bw_row.set_value(e.bw)
             self._updating = False
             if not getattr(self, "_in_tune", False):
+                if mode in ("USB", "LSB"):                   # användaren valde sidband själv
+                    side, zon = ssb_zone(self.freq)
+                    self._ssb_manual_zone = zon if mode != side else None
                 self._refit_kiwi()                           # frontpanel, skannerförval m.fl.
             self.view.queue_draw()
 
@@ -5544,6 +5591,7 @@ def run_gui(args):
                 # KiwiSDR: förstärkningen (Kiwins AGC eller fast) och frekvenskorrigeringen (per Kiwi)
                 r.set_visible(src != "file" and (src != "kiwi" or i < 4))
             self._refresh_ppm_row()
+            self._refresh_gain_rows()
 
         # ── uppspelning av IQ-fil ──
         def _playing(self):
@@ -5718,14 +5766,57 @@ def run_gui(args):
             if self.engine.running and self.engine.source:
                 self.engine.source.set(k, v)
 
+        # KiwiSDR har egen förstärkning (0–120 dB, Kiwins AGC som standard) – skild från dongelns (0–49,6)
+        def _gain_keys(self, kiwi=None):
+            if kiwi is None:
+                kiwi = self.conf.get("source") == "kiwi"
+            return ("kiwi_auto_gain", "kiwi_gain") if kiwi else ("auto_gain", "gain")
+
+        def gain_max(self):
+            return 120.0 if self.conf.get("source") == "kiwi" else 49.6
+
+        def gain_state(self):
+            """(automatisk?, förstärkning i dB, max) för den valda källan."""
+            ka, kg = self._gain_keys()
+            return bool(self.conf.get(ka, True)), float(self.conf.get(kg, 0.0)), self.gain_max()
+
+        def _src_gain(self, src):
+            """Värdet som ska skickas till källan src (None = källans automatik)."""
+            ka, kg = self._gain_keys(isinstance(src, KiwiSource))
+            return None if self.conf.get(ka, True) else float(self.conf.get(kg, 0.0))
+
+        def _refresh_gain_rows(self):
+            if not hasattr(self, "gain_row"):
+                return
+            auto, g, mx = self.gain_state()
+            self._gain_loading = True
+            self.gain_row.get_adjustment().set_upper(mx)
+            self.gain_row.set_value(min(g, mx))
+            self.gain_row.set_sensitive(not auto)
+            self.agc_row.set_active(auto)
+            self.agc_row.set_subtitle("Kiwins egen AGC (rekommenderas)" if self.conf.get("source") == "kiwi" else "")
+            self._gain_loading = False
+
+        def _gain_src_matches(self):
+            """Hör den körande källan till samma sort som den valda (annars väntar ändringen till nästa start)?"""
+            src = self.engine.source
+            return isinstance(src, KiwiSource) == (self.conf.get("source") == "kiwi")
+
         def _on_auto_gain(self, v):
-            self.conf["auto_gain"] = v
+            if getattr(self, "_gain_loading", False):
+                return
+            ka, kg = self._gain_keys()
+            self.conf[ka] = v
             self.gain_row.set_sensitive(not v)
-            self._src_set("gain", None if v else self.conf["gain"])
+            if self._gain_src_matches():
+                self._src_set("gain", None if v else self.conf[kg])
 
         def _on_gain(self, v):
-            self.conf["gain"] = v
-            if not self.conf["auto_gain"]:
+            if getattr(self, "_gain_loading", False):
+                return
+            ka, kg = self._gain_keys()
+            self.conf[kg] = v
+            if not self.conf.get(ka, True) and self._gain_src_matches():
                 self._src_set("gain", v)
 
         def _ppm_kiwi_key(self):
@@ -6017,7 +6108,7 @@ def run_gui(args):
                     btn.set_active(False)
                     return
                 src.set("freq", e.center)
-                src.set("gain", None if self.conf["auto_gain"] else self.conf["gain"])
+                src.set("gain", self._src_gain(src))
                 if self._cur_ppm() if isinstance(src, KiwiSource) else self.conf["ppm"]:
                     src.set("ppm", self._cur_ppm() if isinstance(src, KiwiSource) else self.conf["ppm"])
                 if self.conf["direct"]:
@@ -6828,14 +6919,14 @@ def run_gui(args):
             self.sq_row.set_value(v)
 
         def panel_set_gain(self, v):
-            v = max(0.0, min(49.6, float(v)))
-            if self.conf.get("auto_gain"):
+            v = max(0.0, min(self.gain_max(), float(v)))
+            if self.gain_state()[0]:
                 self.agc_row.set_active(False)          # stänger av AGC, slår på manuell förstärkning
             self._on_gain(v)
             self.gain_row.set_value(v)
 
         def panel_toggle_agc(self):
-            v = not bool(self.conf.get("auto_gain"))
+            v = not self.gain_state()[0]
             self.agc_row.set_active(v)
             self.toast("Automatisk förstärkning på" if v else "Manuell förstärkning")
             return v
