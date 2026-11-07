@@ -2163,8 +2163,15 @@ def run_gui(args):
                 z = min(128, z * 2) if dy < 0 else max(1, z // 2)
                 self.win.set_zoom(z)
             else:
-                st = self.win.step()
-                self.win.tune(round((self.win.freq - dy * st) / st) * st)
+                s = -dy
+                acc = getattr(self, "_wheel_acc", 0.0)
+                if acc * s < 0:                # bytt riktning: börja om
+                    acc = 0.0
+                acc += s
+                k = int(acc)
+                self._wheel_acc = acc - k
+                if k:
+                    self.win.nudge_freq(k)
             return True
 
         def on_drag_begin(self, g, x, y):
@@ -5598,15 +5605,15 @@ def run_gui(args):
                 if w is not None and w.get_selected() != i:
                     w.set_selected(i)
 
-        def nudge_freq(self, d):
+        def nudge_freq(self, k):
+            if not k:
+                return
             st = self.step()
             q = self.freq / st
             n = round(q)
-            if abs(q - n) < 1e-6:
-                n += d
-            else:
-                n = math.floor(q) + 1 if d > 0 else math.ceil(q) - 1
-            self.tune(n * st)
+            if abs(q - n) >= 1e-6:
+                n = math.floor(q) if k > 0 else math.ceil(q)
+            self.tune((n + k) * st)
 
         def tune(self, freq, mode=None, keep_center=False):
             e = self.engine
