@@ -29,7 +29,7 @@ import atexit
 
 APP_NAME = "Signalspanaren"
 APP_ID = "se.eh.Signalspanaren"
-VERSION = "2.12.0"
+VERSION = "2.12.1"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "signalspanaren")
@@ -3893,8 +3893,12 @@ def run_gui(args):
                     cr.close_path()
                     cr.fill()
                 if r.get("occ_bw"):
+                    # alla klassningar sätter inte kanterna (t.ex. linjär modem utan spektrumkanter)
+                    m0 = r.get("f_mid", 0.0) or 0.0
+                    f_lo = r.get("f_lo", m0 - r["occ_bw"] / 2)
+                    f_hi = r.get("f_hi", m0 + r["occ_bw"] / 2)
                     cr.set_source_rgba(*S["track"][:3], 0.35)
-                    cr.rectangle(xo(r["f_lo"]), 1, max(2, xo(r["f_hi"]) - xo(r["f_lo"])), 3)
+                    cr.rectangle(xo(f_lo), 1, max(2, xo(f_hi) - xo(f_lo)), 3)
                     cr.fill()
             if self.mouse:
                 mx, my = self.mouse

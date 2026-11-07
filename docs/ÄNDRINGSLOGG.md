@@ -1,5 +1,9 @@
 # Ändringslogg
 
+## 2.12.1 (2026-11-07)
+
+- **Rättat: krasch i signalanalysens spektrum** (`KeyError: 'f_lo'`). Vissa klassningar satte signalens bredd utan kantfrekvenser, bland annat linjära modem som STANAG 4539 och FT8/FT4-detektorn. Ritningen förutsatte att kanterna fanns och kraschade vid varje omritning. Nu sätts kanterna alltid, och ritningen räknar ut dem från mitt och bredd om de ändå saknas. Upptäckt på Shannon VOLMET 5505 kHz, där analysen ibland gissade STANAG 4539.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

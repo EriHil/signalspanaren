@@ -497,7 +497,7 @@ def analyze(z, fs, bw):
             rm = _ramperiod(np.fft.ifft(Z).astype(np.complex64), fs, lo_ms=20.0, min_r=0.14)
             if rm:
                 out.update(fam="LIN", klass=FAM_NAMN["LIN"], ram_ms=rm[0], ram_styrka=rm[1],
-                           occ_bw=bw * 0.8, f_mid=0.0)
+                           occ_bw=bw * 0.8, f_mid=0.0, f_lo=-bw * 0.4, f_hi=bw * 0.4)
         return out
     cs = np.cumsum(ex) / ex.sum()
     lo = float(fin[min(len(fin) - 1, int(np.searchsorted(cs, 0.005)))])
@@ -1327,6 +1327,8 @@ class Analyzer:
             feat["occ_bw"] = best["baud"] * best["toner"]
             feat["bredd_uppmatt"] = feat["occ_bw"]      # detektorns bredd gäller före kanalens
             feat["f_mid"] = getattr(self, "klick", tgt) - tgt
+            feat["f_lo"] = feat["f_mid"] - feat["occ_bw"] / 2      # kanterna följer detektorns bredd
+            feat["f_hi"] = feat["f_mid"] + feat["occ_bw"] / 2
             # sedd minst två gånger: smalna av kanalen kring klicket (bättre SNR, rätt bredd i panelen)
             ft = self.fit
             if len(namn) >= 2 and ft is not None and ft.get("state") == "klar" and not ft.get("lagbaud"):
