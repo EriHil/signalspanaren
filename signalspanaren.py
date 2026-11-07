@@ -4395,13 +4395,13 @@ def run_gui(args):
             self.alt_dd = Gtk.DropDown.new_from_strings(["Andra möjliga"])
             self.alt_dd.set_tooltip_text("Andra möjliga signaltyper – välj en för att se vad den innebär")
             self.alt_dd.set_visible(False)
-            self.alt_dd.connect("notify::selected", self._on_alt)
+            self.alt_dd.connect("notify::selected", self._on_typ)
             typbox.append(self.alt_dd)
             self.alt = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
             self.alt.add_css_class("analys-ram")
             self.alt.set_visible(False)
             typbox.append(self.alt)
-            self._alt_key, self._alt_items = None, []
+            self._typ_key, self._typ_items, self._typ_busy = None, [], False
             sw_typ = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, min_content_height=110)
             sw_typ.set_overlay_scrolling(False)
             sw_typ.set_child(typbox)
@@ -4746,16 +4746,76 @@ def run_gui(args):
             self.win.flagg_dialog(None, f, forslag={"namn": namn, "typ": typ, "lage": self.win.engine.mode,
                                                     "not": f"analys: {r.get('klass', '')}, {r.get('occ_bw') or 0:.0f} Hz"})
 
-        def _on_alt(self, dd, *_):
-            i = int(dd.get_selected())
-            if not 0 < i <= len(self._alt_items):
-                self.alt.set_visible(False)
+        def _on_typ(self, dd, *_):
+            if self._typ_busy:
                 return
-            sc2, e2 = self._alt_items[i - 1]
-            esc = GLib.markup_escape_text
-            self.alt.set_markup(f"<b>{esc(e2['namn'])}</b> <span alpha='70%'>{sc2:.0f} % · {esc(e2.get('kat', ''))}</span>\n"
-                                f"<span size='small' alpha='75%'>{esc(e2.get('info', ''))}</span>")
-            self.alt.set_visible(True)
+            fl = getattr(self.win, "flaggor", None)
+            if fl is None:
+                return
+            r = self.last or {}
+            op = self._operator_flagga(r)
+            i = int(dd.get_selected())
+            if i == 0:
+                if op is not None and op.get("kalla") == "signaltyp":
+                    fl.ta_bort(op["id"])
+                elif op is not None:
+                    self.win.toast("Klassningen är gjord med Klassa själv – ta bort den där")
+                return
+            if not 0 < i <= len(self._typ_items):
+                return
+            namn, e = self._typ_items[i - 1]
+            typ = (e or {}).get("kat", "")
+            if op is not None:
+                fl.andra(op["id"], namn=namn, typ=typ)
+            else:
+                fl.lagg_till(r.get("f_abs") or self.win.freq, namn, lage=self.win.engine.mode, typ=typ,
+                             noter="Vald i signaltypen", kalla="signaltyp")
+
+        def _typ_visa(self, r, op, shown):
+            """Rullistan för signaltypen: Automatiskt, låst typ, operatörens val, kandidater och alla kända typer."""
+            visa = (bool(r) and r.get("fam") not in (None, "BRUS")) or op is not None
+            self._typ_busy = True
+            try:
+                if not visa:
+                    self.alt_dd.set_visible(False)
+                    self.alt.set_visible(False)
+                    self._typ_key = None
+                    return
+                key = (shown["namn"] if shown else None, op.get("namn") if op else None)
+                if self._typ_key != key:
+                    self._typ_key = key
+                    lista = []
+                    if shown is not None:
+                        lista.append((shown["namn"], shown["e"]))
+                    if op is not None:
+                        lista.append((op.get("namn"), next((x for x in analys.signaldb.SIGNALER
+                                                             if x.get("namn") == op.get("namn")), None)))
+                    for _s, e, _w in (r.get("kandidater") or []):
+                        lista.append((e.get("namn"), e))
+                    for e in analys.signaldb.SIGNALER:
+                        lista.append((e.get("namn"), e))
+                    unika, sedda = [], set()
+                    for n, e in lista:
+                        if n and n not in sedda:
+                            sedda.add(n)
+                            unika.append((n, e))
+                    self._typ_items = unika
+                    self.alt_dd.set_model(Gtk.StringList.new(["Automatiskt (analysen)"] + [n for n, _e in unika]))
+                idx = 0
+                if op is not None:
+                    idx = next((k + 1 for k, (n, _e) in enumerate(self._typ_items) if n == op.get("namn")), 0)
+                self.alt_dd.set_selected(idx)
+                self.alt_dd.set_visible(True)
+                e = self._typ_items[idx - 1][1] if idx > 0 else None
+                if e is not None:
+                    esc = GLib.markup_escape_text
+                    self.alt.set_markup(f"<b>{esc(e['namn'])}</b> <span alpha='70%'>{esc(e.get('kat', ''))}</span>\n"
+                                        f"<span size='small' alpha='75%'>{esc(e.get('info', ''))}</span>")
+                    self.alt.set_visible(True)
+                else:
+                    self.alt.set_visible(False)
+            finally:
+                self._typ_busy = False
 
         def _kand_visa(self, r, op):
             """Signaltyp-rutan: alltid samma tre rader. Visar den låsta typen och byter bara när analysen låser en ny."""
@@ -4765,8 +4825,7 @@ def run_gui(args):
             if lock is not None:
                 nm = lock[1].get("namn")
                 if shown is None or nm != shown["namn"]:
-                    alt = [(sc2, e2) for sc2, e2, _w in (r.get("kandidater") or []) if e2.get("namn") != nm]
-                    shown = {"namn": nm, "e": lock[1], "sc": lock[0], "alt": alt}
+                    shown = {"namn": nm, "e": lock[1], "sc": lock[0]}
                     self._kand_shown = shown
                 elif abs(lock[0] - shown["sc"]) >= 10:
                     shown["sc"] = lock[0]
@@ -4792,18 +4851,7 @@ def run_gui(args):
                 nm_l = "<span alpha='60%'>–</span>"
                 info_l = "<span size='small' alpha='60%'>väntar på en stabil signaltyp</span>"
             self.kand.set_markup(f"<b>Signaltyp</b> <span alpha='70%'>({state})</span>\n{nm_l}\n{info_l}")
-            if op is None and shown is not None and shown["alt"]:
-                if self._alt_key != shown["namn"]:
-                    self._alt_key, self._alt_items = shown["namn"], shown["alt"]
-                    self.alt_dd.set_model(Gtk.StringList.new(
-                        [f"Andra möjliga ({len(shown['alt'])})"]
-                        + [f"{e2['namn']} · {sc2:.0f} %" for sc2, e2 in shown["alt"]]))
-                    self.alt_dd.set_selected(0)
-                self.alt_dd.set_visible(True)
-            else:
-                self.alt_dd.set_visible(False)
-                self.alt.set_visible(False)
-                self._alt_key = None
+            self._typ_visa(r, op, shown)
 
         def _update_rows(self, r):
             self.klassa_btn.set_visible(bool(r and r.get("fam") not in (None, "BRUS")))
