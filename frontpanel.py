@@ -1147,8 +1147,7 @@ class FrontPanel(Adw.Window):
     def _turn(self, n):
         if not self._guard():
             return
-        st = 1e6 if self.mhz_mode else self.main.step()
-        self.main.tune(round((self.main.freq + n * st) / st) * st)
+        self.main.nudge_freq(n, 1e6 if self.mhz_mode else None)
 
     def _mode(self, mode):
         if self._guard():

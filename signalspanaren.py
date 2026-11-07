@@ -5605,10 +5605,10 @@ def run_gui(args):
                 if w is not None and w.get_selected() != i:
                     w.set_selected(i)
 
-        def nudge_freq(self, k):
+        def nudge_freq(self, k, st=None):
             if not k:
                 return
-            st = self.step()
+            st = st or self.step()
             q = self.freq / st
             n = round(q)
             if abs(q - n) >= 1e-6:
