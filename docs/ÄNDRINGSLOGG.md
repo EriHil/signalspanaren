@@ -21,6 +21,10 @@
 - **Signalanalysen öppnar på vald frekvens.** När du öppnar fliken Signalanalys utan analysmål analyseras den inställda kanalen direkt, i stället för att visa "Klicka på en bärvåg". Ett mål som du redan valt med klick ligger kvar.
 - **Frekvensjustering i vattenfallet.** Knapparna **f−** och **f+** bredvid zoomknapparna flyttar den inställda frekvensen till nästa steg ned eller upp. Stegvalet mellan knapparna är samma som Frekvenssteg i sidopanelen, och de två följer varandra.
 - **Rättat: scrollhjulet i vattenfallet** hoppade förbi ett steg när frekvensen inte låg på stegnätet. Med 100 kHz-steg gick 7,124 MHz ned till 7,000 MHz. Nu flyttas det ett steg i taget, som f− och f+. Små rörelser på styrplattan räknas ihop till ett steg, och en ny riktning börjar alltid med ett steg. Samma fel är rättat för den virtuella frontpanelens ratt, även i MHz-läget.
+- **Diagram att välja.** Rutan för diagram har en lista: Automatiskt (växlar efter signaltyp, som förut) eller ett fast diagram: Konstellation, Ramraster, Tonspektrum, Envelop, Frekvensfördelning eller Faxbild. Om det valda diagrammet saknas för signalen står det i rutan. Valet sparas.
+- **Symboler i klartextrutan.** Ettor och nollor från senaste analyssteget (FSK) visas sist i klartextrutan och ersätts vid varje steg. Avkodad text kommer före dem. Tidigare visades de i avkodarcellerna.
+- **Spara och logga klartext.** Knappen Spara sparar hela klartextrutan, med symboler, till en fil i mappen klartext i programmets tillståndsmapp. Knappen Logga skriver ny avkodad text med tidsstämpel till en fil medan den är på. Symbolerna tas inte med i loggen.
+- **Analyslogg per steg.** Varje analyssteg skriver en rad i loggen med uppmätt typ, baud, shift, bandbredd, kandidat, vilka avkodare som passar och vilka som kördes, samt antal tecken text.
 
 ## 2.12.0 (2026-11-07)
 

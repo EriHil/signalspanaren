@@ -3986,11 +3986,31 @@ def run_gui(args):
     class AnalysDiagram(Gtk.DrawingArea):
         """Konstellation (PSK/QAM), frekvensfördelning (FSK/FM), envelop (AM/SSB/CW) eller tonspektrum (OFDM)."""
 
+        NAMN = ("Automatiskt", "Konstellation", "Ramraster", "Tonspektrum", "Envelop", "Frekvensfördelning", "Faxbild")
+
         def __init__(self, panel):
             super().__init__()
             self.panel = panel
+            self.sel = "Automatiskt"
             self.set_size_request(200, 70)
             self.set_draw_func(self.on_draw)
+
+        def _har(self, r, kind):
+            fd = r.get("bild")
+            ras = r.get("ram_raster")
+            if kind == "Faxbild":
+                return fd is not None and fd.bild is not None and len(fd.bild) > 0
+            if kind == "Konstellation":
+                return r.get("konst") is not None
+            if kind == "Ramraster":
+                return ras is not None and len(ras) > 0
+            if kind == "Tonspektrum":
+                return r.get("fam") == "OFDM" and r.get("spec_f") is not None
+            if kind == "Envelop":
+                return r.get("kurva") is not None
+            if kind == "Frekvensfördelning":
+                return r.get("hist") is not None
+            return False
 
         def on_draw(self, area, cr, W, H, *_):
             S = self.panel.win.skin()
@@ -4005,14 +4025,22 @@ def run_gui(args):
             cr.rectangle(x0 + 0.5, y0 + 0.5, w, h)
             cr.set_line_width(1)
             cr.stroke()
+            only = None if self.sel == "Automatiskt" else self.sel
             if not r or r.get("fam") in (None, "BRUS"):
+                if only:
+                    title = f"{only} – väntar på signal"
                 cr.set_source_rgba(*S["text"])
                 cr.move_to(pad, 12)
                 cr.show_text(title)
                 return
             col = S["line"][:3]
             fd = r.get("bild")
-            if fd is not None and fd.bild is not None and len(fd.bild):
+            ras = r.get("ram_raster")
+            has_k = r.get("konst") is not None and only in (None, "Konstellation")
+            has_r = ras is not None and len(ras) > 0 and only in (None, "Ramraster")
+            if only and not self._har(r, only):
+                title = f"{only} – finns inte för den här signalen"
+            if (only in (None, "Faxbild")) and fd is not None and fd.bild is not None and len(fd.bild):
                 title = f"Faxbild ({len(fd.rows)} rader)"
                 img = fd.bild[-int(h * fd.W / max(1, w)):] if len(fd.bild) else fd.bild
                 surf = gray_surface(img)
@@ -4025,10 +4053,7 @@ def run_gui(args):
                 cr.set_source_surface(surf, 0, 0)
                 cr.paint()
                 cr.restore()
-            elif r.get("konst") is not None or r.get("ram_raster") is not None:
-                ras = r.get("ram_raster")
-                has_k = r.get("konst") is not None
-                has_r = ras is not None and len(ras) > 0
+            elif has_k or has_r:
                 if has_k and has_r:
                     title = f"Konstellation · Ramraster ({ras.shape[1]} sym × {ras.shape[0]} ramar)"
                     kw = w * 0.42
@@ -4071,7 +4096,7 @@ def run_gui(args):
                     cr.rectangle(rx0 + 0.5, y0 + 0.5, rw - 1, h - 1)
                     cr.set_line_width(1)
                     cr.stroke()
-            elif r.get("fam") == "OFDM" and r.get("spec_f") is not None:
+            elif only in (None, "Tonspektrum") and r.get("fam") == "OFDM" and r.get("spec_f") is not None:
                 title = f"Tonspektrum ({r.get('toner') or '?'} toner)"
                 f, d = np.asarray(r["spec_f"]), np.asarray(r["spec_db"])
                 self._curve(cr, f, d, x0, y0, w, h, col)
@@ -4082,11 +4107,11 @@ def run_gui(args):
                     cr.move_to(xx, y0 + h)
                     cr.line_to(xx, y0 + h - 6)
                 cr.stroke()
-            elif r.get("kurva") is not None:
+            elif only in (None, "Envelop") and r.get("kurva") is not None:
                 title = "Envelop (senaste ~sekunden)"
                 k = np.asarray(r["kurva"], float)
                 self._curve(cr, np.arange(len(k)), np.clip(k, 0, 1.4), x0, y0, w, h, col, fill=False, ymin=0)
-            elif r.get("hist") is not None:
+            elif only in (None, "Frekvensfördelning") and r.get("hist") is not None:
                 title = "Frekvensfördelning"
                 c, hs = r["hist"]
                 self._curve(cr, np.asarray(c), np.asarray(hs, float), x0, y0, w, h, col, ymin=0)
@@ -4319,8 +4344,26 @@ def run_gui(args):
             right = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, wide_handle=True)
             right.add_css_class("delare")
             self.diag = AnalysDiagram(self)
+            self.diag.set_vexpand(True)
+            dbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            dhdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            dhdr.set_margin_start(6)
+            dhdr.set_margin_end(6)
+            dhdr.set_margin_top(4)
+            dhdr.append(Gtk.Label(label="Diagram", xalign=0, hexpand=True, css_classes=["dim-label"]))
+            self.diag_dd = Gtk.DropDown.new_from_strings(list(AnalysDiagram.NAMN))
+            self.diag_dd.set_tooltip_text("Välj diagram – Automatiskt växlar efter signaltyp")
+            vald = win.conf.get("analys_diagram", "Automatiskt")
+            if vald not in AnalysDiagram.NAMN:
+                vald = "Automatiskt"
+            self.diag.sel = vald
+            self.diag_dd.set_selected(AnalysDiagram.NAMN.index(vald))
+            self.diag_dd.connect("notify::selected", self._on_diag)
+            dhdr.append(self.diag_dd)
+            dbox.append(dhdr)
+            dbox.append(self.diag)
             fr = Gtk.Frame()
-            fr.set_child(self.diag)
+            fr.set_child(dbox)
             right.set_start_child(fr)
             right.set_shrink_start_child(False)
             info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -4347,8 +4390,22 @@ def run_gui(args):
                                         max_content_height=170)
             sw_typ.set_child(typbox)
             info.append(sw_typ)
-            info.append(Gtk.Label(label="Klartext från avkodaren", xalign=0, css_classes=["dim-label"]))
+            kh = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            kh.append(Gtk.Label(label="Klartext från avkodaren", xalign=0, hexpand=True, css_classes=["dim-label"]))
+            self._logg_fil = None
+            self.logg_btn = Gtk.ToggleButton(label="⏺ Logga")
+            self.logg_btn.add_css_class("flat")
+            self.logg_btn.set_tooltip_text("Logga ny avkodad text till en fil fortlöpande")
+            self.logg_btn.connect("toggled", self._on_logg)
+            kh.append(self.logg_btn)
+            spar = Gtk.Button(label="💾 Spara")
+            spar.add_css_class("flat")
+            spar.set_tooltip_text("Spara hela klartextrutan (inklusive symboler) till en fil")
+            spar.connect("clicked", lambda *_: self._spara_klartext())
+            kh.append(spar)
+            info.append(kh)
             self.textbuf = Gtk.TextBuffer()
+            self.sym_mark = self.textbuf.create_mark("symboler", self.textbuf.get_end_iter(), False)
             tv = Gtk.TextView(buffer=self.textbuf, editable=False, wrap_mode=Gtk.WrapMode.CHAR, monospace=True)
             tv.add_css_class("analys-text")
             tv.set_left_margin(6)
@@ -4450,6 +4507,7 @@ def run_gui(args):
             self.auto_bw = auto_bw
             self.an.set_target(f, auto_bw if auto else bw, auto=auto)
             self._title_tap = None
+            self._show_symbols(None)
             self.fax_dec = None
             self.fax_btn.set_visible(False)
             self.last = None
@@ -4502,6 +4560,12 @@ def run_gui(args):
             else:
                 self.an.tvinga = ""          # ingen avkodare körs
             log.info("Signalanalys: avkodare %s", self.an.tvinga if self.an.tvinga is not None else "automatiskt")
+
+        def _on_diag(self, dd, *_):
+            name = AnalysDiagram.NAMN[int(dd.get_selected())]
+            self.diag.sel = name
+            self.win.conf["analys_diagram"] = name
+            self.diag.queue_draw()
 
         def open_fax(self):
             if self.fax_dec is None:
@@ -4581,6 +4645,7 @@ def run_gui(args):
                 if r is not None and r.get("target") == an.tap.target:
                     self.last = r
                     self._update_rows(r)
+                    self._show_symbols(r)
                     self.diag.queue_draw()
                     fd = r.get("bild")
                     if fd is not None:
@@ -4602,7 +4667,10 @@ def run_gui(args):
                     name, txt = an.text_q.popleft()
                 except IndexError:
                     break
-                self.textbuf.insert(self.textbuf.get_end_iter(), txt)
+                self.textbuf.insert(self.textbuf.get_iter_at_mark(self.sym_mark), txt)
+                if self._logg_fil is not None:
+                    self._logg_fil.write(f"{time.strftime('%H:%M:%S')} [{name}] {txt}\n")
+                    self._logg_fil.flush()
                 self.text_t = time.time()
                 if self.textbuf.get_char_count() > 20000:
                     s_ = self.textbuf.get_start_iter()
@@ -4713,8 +4781,6 @@ def run_gui(args):
                     self._set(key, vals[i][1], vals[i][0])
                 else:
                     self._set(key, None)
-            if r.get("symboler") and len(vals) < 3:
-                self._set(("avk1", "avk2", "avk3")[len(vals)], r["symboler"][-40:], "Symboler (senaste)")
             k = r.get("kandidater") or []
             pick = r.get("kandidat") or (k[0] if k else None)
             locked = bool(r.get("kandidat_las"))
@@ -4754,6 +4820,50 @@ def run_gui(args):
             if pick is None:
                 self.alt_exp.set_visible(False)
             self.kand.set_markup("\n".join(lines))
+
+        def _klartext_mapp(self):
+            mapp = os.path.join(STATE_DIR, "klartext")
+            os.makedirs(mapp, exist_ok=True)
+            return mapp
+
+        def _spara_klartext(self):
+            buf = self.textbuf
+            text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+            if not text.strip():
+                self.win.toast("Klartextrutan är tom")
+                return
+            sokv = os.path.join(self._klartext_mapp(), f"klartext-{time.strftime('%Y%m%d-%H%M%S')}.txt")
+            tg = self.an.tap.target
+            with open(sokv, "w", encoding="utf-8") as fh:
+                fh.write(f"Signalspanaren klartext {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                         + (f", {fmt_mhz(tg)} MHz" if tg else "") + "\n\n")
+                fh.write(text)
+            self.win.toast(f"Klartext sparad: {sokv}")
+
+        def _on_logg(self, btn):
+            if btn.get_active():
+                sokv = os.path.join(self._klartext_mapp(), f"klartext-logg-{time.strftime('%Y%m%d-%H%M%S')}.txt")
+                self._logg_fil = open(sokv, "a", encoding="utf-8")
+                self._logg_fil.write(f"# loggning startad {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                self._logg_fil.flush()
+                self.win.toast(f"Loggar klartext till {sokv}")
+            else:
+                if self._logg_fil is not None:
+                    self._logg_fil.close()
+                self._logg_fil = None
+                self.win.toast("Klartextloggen stoppad")
+
+        def _show_symbols(self, r):
+            """Ettor och nollor från senaste analyssteget, sist i klartextrutan. Ersätts vid varje steg."""
+            buf = self.textbuf
+            start = buf.get_iter_at_mark(self.sym_mark).get_offset()
+            buf.delete(buf.get_iter_at_offset(start), buf.get_end_iter())
+            sym = r.get("symboler") if r else None
+            if sym:
+                grupper = " ".join(sym[i:i + 8] for i in range(0, len(sym), 8))
+                buf.insert(buf.get_end_iter(),
+                           f"\n── symboler, senaste {len(sym)} ({(r.get('baud') or 0):.0f} Bd) ──\n{grupper}\n")
+            buf.move_mark(self.sym_mark, buf.get_iter_at_offset(start))
 
         def copy(self):
             r = self.last or {}
