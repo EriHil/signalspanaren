@@ -4122,6 +4122,18 @@ def run_gui(args):
                     cr.move_to(xx, y0)
                     cr.line_to(xx, y0 + 6)
                 cr.stroke()
+                span_hz = hi - lo
+                step = 1000.0 if span_hz >= 2000 else 100.0
+                cr.set_source_rgba(*S["text"])
+                for k in range(int(np.ceil(lo / step)), int(np.floor(hi / step)) + 1):
+                    xx = x0 + (k * step - lo) / max(1e-9, span_hz) * w
+                    cr.move_to(xx, y0 + h - 10)
+                    cr.line_to(xx, y0 + h)
+                    cr.stroke()
+                    cr.move_to(xx + 2, y0 + h - 2)
+                    cr.show_text(str(k) if step == 1000.0 else str(int(k * step)))
+                cr.move_to(x0 + w - 24, y0 + h - 2)
+                cr.show_text("kHz" if step == 1000.0 else "Hz")
             cr.set_source_rgba(*S["text"])
             cr.move_to(pad, 12)
             cr.show_text(title)
@@ -4239,6 +4251,7 @@ def run_gui(args):
             self.an = win.analyzer
             self.last = None
             self._rid = -1
+            self._kand_shown = None
             self.text_t = 0
             self.set_margin_top(6)
             self.set_margin_start(6)
@@ -4379,15 +4392,18 @@ def run_gui(args):
             self.klassa_btn.connect("clicked", lambda *_: self._klassa_sjalv())
             self.klassa_btn.set_visible(False)
             typbox.append(self.klassa_btn)
+            self.alt_dd = Gtk.DropDown.new_from_strings(["Andra möjliga"])
+            self.alt_dd.set_tooltip_text("Andra möjliga signaltyper – välj en för att se vad den innebär")
+            self.alt_dd.set_visible(False)
+            self.alt_dd.connect("notify::selected", self._on_alt)
+            typbox.append(self.alt_dd)
             self.alt = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
             self.alt.add_css_class("analys-ram")
-            self.alt_exp = Gtk.Expander(label="Andra möjliga")
-            self.alt_exp.set_child(self.alt)
-            self.alt_exp.set_expanded(False)
-            self.alt_exp.set_visible(False)
-            typbox.append(self.alt_exp)
-            sw_typ = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True,
-                                        max_content_height=170)
+            self.alt.set_visible(False)
+            typbox.append(self.alt)
+            self._alt_key, self._alt_items = None, []
+            sw_typ = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, min_content_height=110)
+            sw_typ.set_overlay_scrolling(False)
             sw_typ.set_child(typbox)
             info.append(sw_typ)
             kh = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
@@ -4507,6 +4523,7 @@ def run_gui(args):
             self.auto_bw = auto_bw
             self.an.set_target(f, auto_bw if auto else bw, auto=auto)
             self._title_tap = None
+            self._kand_shown = None
             self._show_symbols(None)
             self.fax_dec = None
             self.fax_btn.set_visible(False)
@@ -4729,6 +4746,65 @@ def run_gui(args):
             self.win.flagg_dialog(None, f, forslag={"namn": namn, "typ": typ, "lage": self.win.engine.mode,
                                                     "not": f"analys: {r.get('klass', '')}, {r.get('occ_bw') or 0:.0f} Hz"})
 
+        def _on_alt(self, dd, *_):
+            i = int(dd.get_selected())
+            if not 0 < i <= len(self._alt_items):
+                self.alt.set_visible(False)
+                return
+            sc2, e2 = self._alt_items[i - 1]
+            esc = GLib.markup_escape_text
+            self.alt.set_markup(f"<b>{esc(e2['namn'])}</b> <span alpha='70%'>{sc2:.0f} % · {esc(e2.get('kat', ''))}</span>\n"
+                                f"<span size='small' alpha='75%'>{esc(e2.get('info', ''))}</span>")
+            self.alt.set_visible(True)
+
+        def _kand_visa(self, r, op):
+            """Signaltyp-rutan: alltid samma tre rader. Visar den låsta typen och byter bara när analysen låser en ny."""
+            esc = GLib.markup_escape_text
+            lock = r.get("kandidat") if r and r.get("kandidat_las") else None
+            shown = getattr(self, "_kand_shown", None)
+            if lock is not None:
+                nm = lock[1].get("namn")
+                if shown is None or nm != shown["namn"]:
+                    alt = [(sc2, e2) for sc2, e2, _w in (r.get("kandidater") or []) if e2.get("namn") != nm]
+                    shown = {"namn": nm, "e": lock[1], "sc": lock[0], "alt": alt}
+                    self._kand_shown = shown
+                elif abs(lock[0] - shown["sc"]) >= 10:
+                    shown["sc"] = lock[0]
+            if op is not None:
+                state = "din klassning"
+                nm_l = f"🚩 <b>{esc(op['namn'])}</b>"
+                info_l = f"<span size='small' alpha='75%'>{esc(op.get('typ', ''))}</span>"
+            elif shown is not None:
+                e = shown["e"]
+                kat = e.get("kat", "")
+                colr = {"militär": "#ff7a5c", "myndighet": "#ffb547"}.get(kat, "#7fe0d0")
+                state = "låst"
+                nm_l = (f"<span foreground='{colr}'>●</span> <b>{esc(shown['namn'])}</b> "
+                        f"<span alpha='70%'>{shown['sc']:.0f} % · {esc(kat)}</span>")
+                info_l = f"<span size='small' alpha='75%'>{esc(e.get('info', ''))}</span>"
+            elif r and r.get("osaker") and r.get("fam") not in (None, "BRUS"):
+                state = "söker"
+                nm_l = "<b>Osäker – klassa själv</b>"
+                info_l = ("<span size='small' alpha='80%'>Lyssna och använd mätvärdena – "
+                          "spara din bedömning med <i>Klassa själv</i>.</span>")
+            else:
+                state = "söker"
+                nm_l = "<span alpha='60%'>–</span>"
+                info_l = "<span size='small' alpha='60%'>väntar på en stabil signaltyp</span>"
+            self.kand.set_markup(f"<b>Signaltyp</b> <span alpha='70%'>({state})</span>\n{nm_l}\n{info_l}")
+            if op is None and shown is not None and shown["alt"]:
+                if self._alt_key != shown["namn"]:
+                    self._alt_key, self._alt_items = shown["namn"], shown["alt"]
+                    self.alt_dd.set_model(Gtk.StringList.new(
+                        [f"Andra möjliga ({len(shown['alt'])})"]
+                        + [f"{e2['namn']} · {sc2:.0f} %" for sc2, e2 in shown["alt"]]))
+                    self.alt_dd.set_selected(0)
+                self.alt_dd.set_visible(True)
+            else:
+                self.alt_dd.set_visible(False)
+                self.alt.set_visible(False)
+                self._alt_key = None
+
         def _update_rows(self, r):
             self.klassa_btn.set_visible(bool(r and r.get("fam") not in (None, "BRUS")))
             op = self._operator_flagga(r)
@@ -4740,8 +4816,7 @@ def run_gui(args):
                 self._set("klass", "Ingen signal" if r else "–")
                 if r:
                     self._set("snr", f"{r.get('snr', 0):.1f} dB")
-                self.kand.set_markup("<b>Signaltyp</b>\n–")
-                self.alt_exp.set_visible(False)
+                self._kand_visa(r, op)
                 return
             fam = r["fam"]
             sak = r.get("sakerhet")
@@ -4781,45 +4856,7 @@ def run_gui(args):
                     self._set(key, vals[i][1], vals[i][0])
                 else:
                     self._set(key, None)
-            k = r.get("kandidater") or []
-            pick = r.get("kandidat") or (k[0] if k else None)
-            locked = bool(r.get("kandidat_las"))
-            lines = [f"<b>Signaltyp{' (låst)' if locked else ' (trolig)'}</b>"]
-            if op is not None:
-                lines = [f"<b>Signaltyp – din klassning</b>",
-                         f"🚩 <b>{GLib.markup_escape_text(op['namn'])}</b> "
-                         f"<span alpha='70%'>{GLib.markup_escape_text(op.get('typ', ''))}</span>",
-                         "<span size='small' alpha='75%'>Analysens förslag:</span>"]
-            elif r.get("osaker"):
-                lines = ["<b>Signaltyp – osäker</b>",
-                         "<span size='small' alpha='80%'>Analysen är inte säker nog att klassa signalen. Lyssna och "
-                         "använd mätvärdena – och spara din bedömning med <i>Klassa själv</i>.</span>",
-                         "<span size='small' alpha='60%'>Kanske:</span>"]
-            if pick is None:
-                lines.append("<span alpha='60%'>ingen känd typ passar</span>")
-            else:
-                sc, e, why = pick
-                kat = e.get("kat", "")
-                colr = {"militär": "#ff7a5c", "myndighet": "#ffb547"}.get(kat, "#7fe0d0")
-                lines.append(f"<span foreground='{colr}'>●</span> <b>{GLib.markup_escape_text(e['namn'])}</b> "
-                             f"<span alpha='70%'>{sc:.0f} % · {GLib.markup_escape_text(kat)}</span>")
-                lines.append(f"<span size='small' alpha='75%'>{GLib.markup_escape_text(e.get('info', ''))}</span>")
-                rest = [x for x in k if x[1].get("namn") != e.get("namn")]
-                if rest:
-                    al = []
-                    for sc2, e2, _why in rest:
-                        kat2 = e2.get("kat", "")
-                        colr2 = {"militär": "#ff7a5c", "myndighet": "#ffb547"}.get(kat2, "#7fe0d0")
-                        al.append(f"<span foreground='{colr2}'>●</span> <b>{GLib.markup_escape_text(e2['namn'])}</b> "
-                                  f"<span alpha='70%'>{sc2:.0f} % · {GLib.markup_escape_text(kat2)}</span>")
-                    self.alt.set_markup("\n".join(al))
-                    self.alt_exp.set_label(f"Andra möjliga ({len(rest)})")
-                    self.alt_exp.set_visible(True)
-                else:
-                    self.alt_exp.set_visible(False)
-            if pick is None:
-                self.alt_exp.set_visible(False)
-            self.kand.set_markup("\n".join(lines))
+            self._kand_visa(r, op)
 
         def _klartext_mapp(self):
             mapp = os.path.join(STATE_DIR, "klartext")

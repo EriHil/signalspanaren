@@ -25,6 +25,9 @@
 - **Symboler i klartextrutan.** Ettor och nollor från senaste analyssteget (FSK) visas sist i klartextrutan och ersätts vid varje steg. Avkodad text kommer före dem. Tidigare visades de i avkodarcellerna.
 - **Spara och logga klartext.** Knappen Spara sparar hela klartextrutan, med symboler, till en fil i mappen klartext i programmets tillståndsmapp. Knappen Logga skriver ny avkodad text med tidsstämpel till en fil medan den är på. Symbolerna tas inte med i loggen.
 - **Analyslogg per steg.** Varje analyssteg skriver en rad i loggen med uppmätt typ, baud, shift, bandbredd, kandidat, vilka avkodare som passar och vilka som kördes, samt antal tecken text.
+- **Signaltyp-rutan är låst.** Rutan visar alltid samma tre rader: rubrik med läge, typ med säkerhet och en förklaring. Den byter bara när analysen låser en ny typ. Vid ny målfrekvens börjar den om.
+- **Andra möjliga som rullista.** Alternativen visas i en rullista i stället för en textlista som klipptes. Väljer du en visas dess förklaring under rutan. Rutan får en fast minimihöjd och scrollar i stället för att klippa.
+- **kHz-skala i frekvensfördelningen.** Histogrammet har märken längs underkanten: 1 kHz när området är minst 2 kHz, annars 100 Hz. Då syns signalens bredd.
 
 ## 2.12.0 (2026-11-07)
 
