@@ -4516,12 +4516,21 @@ def run_gui(args):
                 bw = float(np.clip(auto_bw * 1.35, 400, 250e3))
             return bw
 
+        def _klartext_rensa(self):
+            """Tömmer klartextrutan och den köade texten när målet byts till en annan signal."""
+            self.textbuf.set_text("")
+            self.an.text_q.clear()
+
         def set_target(self, f, auto_bw, fit=True):
             """fit=False: använd bredden som den är (t.ex. demodulatorns kanal i läget Följ inställd)."""
             auto = fit and self.bw_dd.get_selected() == 0
             bw = self.chosen_bw(auto_bw)
             self.auto_bw = auto_bw
+            forra = getattr(self, "_klar_f", None)
             self.an.set_target(f, auto_bw if auto else bw, auto=auto)
+            if forra is None or abs(f - forra) > max(500.0, bw / 2):
+                self._klartext_rensa()
+            self._klar_f = f
             self._title_tap = None
             self._kand_shown = None
             self._show_symbols(None)
