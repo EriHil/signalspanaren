@@ -4861,6 +4861,13 @@ def run_gui(args):
             ctrls.append(_btn("−", "Zooma ut i vattenfallet", lambda: self.zoom_spectrum(0.5)))
             ctrls.append(_btn("1:1", "Återställ zoom", lambda: self.zoom_spectrum(0)))
             ctrls.append(_btn("+", "Zooma in i vattenfallet", lambda: self.zoom_spectrum(2)))
+            ctrls.append(_btn("f−", "Flytta inställd frekvens ett steg ned", lambda: self.nudge_freq(-1)))
+            self.wf_step_dd = Gtk.DropDown.new_from_strings(STEP_NAMES)
+            self.wf_step_dd.set_selected(self.conf["step_idx"])
+            self.wf_step_dd.set_tooltip_text("Frekvenssteg för f− och f+ (samma som Frekvenssteg i sidopanelen)")
+            self.wf_step_dd.connect("notify::selected", lambda dd, _p: self._set_step_idx(dd.get_selected()))
+            ctrls.append(self.wf_step_dd)
+            ctrls.append(_btn("f+", "Flytta inställd frekvens ett steg upp", lambda: self.nudge_freq(1)))
             ctrls.append(_btn("◀", "Flytta spektrumet åt vänster", lambda: self.pan_spectrum(-1)))
             ctrls.append(_btn("▶", "Flytta spektrumet åt höger", lambda: self.pan_spectrum(1)))
             overlay.add_overlay(ctrls)
@@ -5122,7 +5129,7 @@ def run_gui(args):
                        lambda v: self._set_agc("agc_decay", v),
                        "Hur snabbt ljudet återhämtar sig – lägre = mindre brus mellan orden (SDR++: 5)")
             self.step_row = self._combo(g, "Frekvenssteg", STEP_NAMES, c["step_idx"],
-                                        lambda i: self._set_conf("step_idx", i))
+                                        lambda i: self._set_step_idx(i))
             self._button(g, "🎛 DSP-filter", self._open_dsp).set_tooltip_text(
                 "Visar/döljer en panel till höger om vattenfallet med filterform, PBT, brusreducering, notch, "
                 "störningsblankare och tonkontroll – går att använda medan du lyssnar")
@@ -5584,6 +5591,22 @@ def run_gui(args):
         def step(self):
             s = STEPS[self.conf["step_idx"]] if 0 <= self.conf["step_idx"] < len(STEPS) else 0
             return s or DEFAULT_STEP[self.engine.mode]
+
+        def _set_step_idx(self, i):
+            self._set_conf("step_idx", i)
+            for w in (getattr(self, "step_row", None), getattr(self, "wf_step_dd", None)):
+                if w is not None and w.get_selected() != i:
+                    w.set_selected(i)
+
+        def nudge_freq(self, d):
+            st = self.step()
+            q = self.freq / st
+            n = round(q)
+            if abs(q - n) < 1e-6:
+                n += d
+            else:
+                n = math.floor(q) + 1 if d > 0 else math.ceil(q) - 1
+            self.tune(n * st)
 
         def tune(self, freq, mode=None, keep_center=False):
             e = self.engine
@@ -7441,9 +7464,7 @@ def run_gui(args):
             return v
 
         def panel_step(self, d):
-            self.conf["step_idx"] = (int(self.conf.get("step_idx", 0)) + int(d)) % len(STEPS)
-            if hasattr(self, "step_row"):
-                self.step_row.set_selected(self.conf["step_idx"])
+            self._set_step_idx((int(self.conf.get("step_idx", 0)) + int(d)) % len(STEPS))
             self.toast(f"Frekvenssteg: {STEP_NAMES[self.conf['step_idx']]}")
 
         def panel_bw_step(self, d):
