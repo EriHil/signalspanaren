@@ -3,6 +3,8 @@
 ## 2.12.1 (2026-11-07)
 
 - **Rättat: krasch i signalanalysens spektrum** (`KeyError: 'f_lo'`). Vissa klassningar satte signalens bredd utan kantfrekvenser, bland annat linjära modem som STANAG 4539 och FT8/FT4-detektorn. Ritningen förutsatte att kanterna fanns och kraschade vid varje omritning. Nu sätts kanterna alltid, och ritningen räknar ut dem från mitt och bredd om de ändå saknas. Upptäckt på Shannon VOLMET 5505 kHz, där analysen ibland gissade STANAG 4539.
+- **Tal klassas inte längre som modem eller FM.** På VOLMET blev vart fjärde analyssteg "Digital linjär" och föreslog STANAG 4539. Talets grundton (5,7 ms ≈ 175 Hz) och sökningens nedre gräns (20 ms) togs för en modemram, och sökningen godtog ett "maximum" som bara var gränsen. Nu krävs en verklig topp. Tal med stavelsevariation (minst 1,5 dB) klassas inte som LIN, varken direkt eller via ramminnet. Svagt SSB-tal i brus blev ofta "FM", men FM kräver nu konstant envelope (stavelsevariation under 2 dB). En bandbredd där bruset dominerar (SNR under 0 dB) blir "brus" i stället för FM.
+- **Fyra nya facit-klipp med riktigt tal:** Shannon VOLMET 5505 kHz USB, 40 m LSB (svag), samt en tysk och en finsk station på 80 m. Signalfamiljen blir rätt på 42 av 42 klipp. STANAG 4285, PSK och FT8 känns igen som förut.
 
 ## 2.12.0 (2026-11-07)
 

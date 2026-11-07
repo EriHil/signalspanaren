@@ -716,8 +716,10 @@ def analyze(z, fs, bw):
         fam = "AM"                 # bärvågen bär större delen av effekten (OFDM-piloter: några procent)
     elif psk:
         fam = psk
-    elif single:
-        fam = "LIN"                # en bärvåg med symboltakt – inte OFDM/AM/FM även om spektrumet rippar
+    elif single and syll < 1.5:
+        # en bärvåg med symboltakt – inte OFDM/AM/FM även om spektrumet rippar. Tal (stavelser, 2–3,5 dB
+        # ljudvariation) kan ge en skenbar symbollinje/ram, modem har jämn effekt (< 0,7 dB)
+        fam = "LIN"
     elif nlev >= 2 and cv_c < fsk_cv and shift and (nlev > 2 or trans < 0.18 or
                                                     (fsk_baud and abs(shift / fsk_baud - 0.5) < 0.12)):
         if fsk_baud:
@@ -737,9 +739,15 @@ def analyze(z, fs, bw):
         fam = "AM"
     elif baud and bstr >= 14 and cv_c > 0.15 and syll < 1.5:
         fam = "LIN"
-    elif cv_c < 0.3 and dev > max(3 * res, 0.08 * occ):
+    elif out.get("snr", 0.0) < 0.0 and cv_c < 0.3 and syll < 2.0:
+        # mer brus än signal i den upptagna bandbredden och ingen envelope-/stavelsevariation:
+        # brusets konstanta medel-envelope ser annars ut som FM (uppmätt i talpauser på 80 m)
+        fam = "BRUS"
+    elif cv_c < 0.3 and dev > max(3 * res, 0.08 * occ) and syll < 2.0:
+        # FM har konstant envelope (liten ljudvariation); svagt SSB-tal i brus kan få låg cv men behåller
+        # stavelsernas nivåvariation (3–4 dB uppmätt på riktig 40/80 m-trafik)
         fam = "FM"
-    elif cv_c >= 0.3:
+    elif cv_c >= 0.3 or (syll >= 2.0 and occ >= 1000):
         fam = "SSB"
     else:
         fam = "OKÄND"
@@ -824,6 +832,10 @@ def _ramperiod(z, fs, lo_ms=5.0, hi_ms=250.0, min_r=0.12, min_kvot=6.0):
     i = int(np.argmax(seg))
     topp, med = float(seg[i]), float(np.median(seg)) + 1e-9
     if topp < min_r or topp < min_kvot * med:
+        return None
+    # en riktig ram är en topp: autokorrelationen ska stiga fram till den. Ligger maximum vid sökningens
+    # början avtar den bara (t.ex. tal, vars autokorrelation sjunker långsamt) – ingen ram.
+    if i < 2 or float(r[lo + i - 2:lo + i].min()) >= topp * 0.97:
         return None
     j = lo + i
     # grundperioden: en halv/tredjedels period som är nästan lika stark är den verkliga ramen
@@ -1348,7 +1360,8 @@ class Analyzer:
         ref = float(np.median(vals))
         lika = [x for x in vals if abs(x - ref) / ref < 0.015]
         if len(lika) >= 3:
-            if feat.get("fam") in ("FM", "BRUS", "SSB", "OKÄND"):
+            tal = feat.get("fam") == "SSB" and (feat.get("ljudvariation") or 0.0) >= 1.5
+            if feat.get("fam") in ("FM", "BRUS", "SSB", "OKÄND") and not tal:
                 feat["fam"] = "LIN"
                 feat["klass"] = FAM_NAMN["LIN"]
             if feat.get("fam") in ("LIN", "PSK8", "QPSK", "BPSK"):
