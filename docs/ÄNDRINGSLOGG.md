@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## Att göra
+
+- [ ] **Anonym delning av klassningar.** Valbart vid installation, avstängt som standard.
+  - Skickas: mätvärden och vald signaltyp. Aldrig klartext, anteckningar, plats eller tid.
+  - Ingen identitet går till GitHub.
+  - När majoriteten av användarna över tid är överens om en klassning, införs den i signaldatabasen automatiskt.
+  - Gränser för antal användare och tid bestäms när det byggs.
+
 ## 2.12.1 (2026-11-07, ej släppt)
 
 - **Rättat: krasch i signalanalysens spektrum** (`KeyError: 'f_lo'`). Vissa klassningar satte signalens bredd utan kantfrekvenser, bland annat linjära modem som STANAG 4539 och FT8/FT4-detektorn. Ritningen förutsatte att kanterna fanns och kraschade vid varje omritning. Nu sätts kanterna alltid, och ritningen räknar ut dem från mitt och bredd om de ändå saknas. Upptäckt på Shannon VOLMET 5505 kHz, där analysen ibland gissade STANAG 4539.
