@@ -9,6 +9,11 @@
   - **Smala signaler där en bärvåg dominerar** blir bärvåg och inte FM (CHU på långt håll). FM kräver nu minst 1,5 kHz bredd, och SSB minst 800 Hz.
   - **FSK där man klickar mellan tonerna** (850 Hz shift): bandbredden fastnade mellan tonerna och gav "brus". Nu hittas två toner på var sin sida om klicket. Två smala toner som bär nästan all effekt räknas som FSK2 även när signalen är för svag för tonhistogrammet.
   - **Förslaget byter snabbare** när det låsta förslaget inte längre passar alls, till exempel "SSB-tal" efter att mätningen visat FSK.
+- **Flaggor ovanför vattenfallet** (ny fil `flaggor.py`). Med en KiwiSDR som källa hämtas Kiwins egna stationsflaggor, till exempel VOLMET, HFDL, STANAG, FAX och tidssignaler. Hämtningen sker i bakgrunden, tar några sekunder och sparas ett dygn. De ritas längst ner i spektrumet, med färg efter typ. Kiwins flaggor visas bara när de sänder enligt sin tidsangivelse.
+  - **Klicka på en flagga** för att stämma in den, med frekvens och läge.
+  - **Högerklicka utan att dra** för att lägga till en flagga, ändra eller ta bort den, eller dölja en av Kiwins. Högerdrag flyttar fortfarande vattenfallet.
+  - **Egna flaggor** sparas i `~/.config/signalspanaren/flaggor.json` och visas oavsett källa. En ändrad Kiwi-flagga sparas som en egen kopia, eftersom Kiwins databas kräver ägarens lösenord.
+  - Sektionen **Flaggor** i sidopanelen har visa/dölj, hämtning av Kiwins flaggor och "Ny flagga på inställd frekvens".
 - **Hopfällbara sektioner i sidopanelen:** klicka på en rubrik för att fälla ihop eller fälla ut den. Läget sparas.
 - **Fyra nya facit-klipp med riktigt tal:** Shannon VOLMET 5505 kHz USB, 40 m LSB (svag), samt en tysk och en finsk station på 80 m. Signalfamiljen blir rätt på 42 av 42 klipp. STANAG 4285, PSK och FT8 känns igen som förut.
 

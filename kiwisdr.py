@@ -22,6 +22,7 @@ Ingen extra Python-modul behövs – websocket-klienten nedan räcker för det K
 """
 
 import base64
+import json
 import logging
 import os
 import socket
@@ -532,6 +533,94 @@ class KiwiSource:
             self.cli.close()
             self.cli = None
             log.info("Kopplade ner från KiwiSDR")
+
+
+# ════════════════════════════════════════════════════════════════════
+# DX-flaggor (stationsetiketterna på Kiwins vattenfall)
+# ════════════════════════════════════════════════════════════════════
+DX_LAGEN = ['AM', 'AMN', 'USB', 'LSB', 'CW', 'CWN', 'NBFM', 'IQ', 'DRM', 'USN', 'LSN', 'SAM', 'SAU', 'SAL', 'SAS',
+            'QAM', 'NNFM', 'AMW']
+
+
+def _dx_dekod(fl):
+    """Kiwins flaggfält → (läge, typnyckel). Nya versioner: läge fl&0xf (+16 om 0x40000), typ (fl&0x1f0)>>4;
+    äldre (v1.4xx): (typ << 16) | läge."""
+    if fl > 0xffff and (fl & 0xfff0) == 0:
+        m, t = fl & 0xf, fl >> 16
+    else:
+        m, t = (fl & 0xf) | (16 if fl & 0x40000 else 0), (fl & 0x1f0) >> 4
+    return (DX_LAGEN[m] if m < len(DX_LAGEN) else "AM"), t
+
+
+def hamta_flaggor(addr, lo_khz=0.0, hi_khz=30000.0, steg_khz=2000.0, timeout=45.0):
+    """Hämtar Kiwins egna DX-flaggor via vattenfallskanalen, som Kiwins webbsida (SET MARKER → MSG mkr=).
+    Returnerar en lista med dict(f=Hz, namn, lage, typ, not, b, e). Kopplar ner direkt efteråt.
+    OBS: kommandot måste ha exakt det format servern väntar sig (eibi_types_mask=0x…) – annars tolkas
+    klienten som ett okänt program och kastas ut med too_busy."""
+    host, port, pw, sec = parse_addr(addr)
+    ws = WebSocket(host, port, f"/kiwi/{int(time.time())}/W/F", sec)
+    ws.sock.settimeout(8)
+    typer, ut, sedda = {}, [], set()
+    try:
+        ws.send(f"SET auth t=kiwi p={pw}")
+        ws.send("SERVER DE CLIENT Signalspanaren W/F")
+        for c in ("SET send_dB=1", "SET zoom=0 start=0", "SET maxdb=0 mindb=-100", "SET wf_speed=1", "SET wf_comp=0"):
+            ws.send(c)
+
+        def vanta(sek, pa_mkr):
+            t_end = time.monotonic() + sek
+            while time.monotonic() < t_end:
+                m = ws.recv()
+                if m[:3] != b"MSG":
+                    continue
+                txt = m[4:].decode(errors="replace")
+                if txt.startswith("mkr="):
+                    return urllib.parse.unquote(txt[4:])
+                for kv in txt.split(" "):
+                    k, _, v = kv.partition("=")
+                    if k == "load_dxcfg":
+                        try:
+                            typer.update({t["key"]: t["name"] for t in json.loads(urllib.parse.unquote(v)).get("dx_type", [])})
+                        except (ValueError, KeyError, TypeError):
+                            pass
+                    elif k == "too_busy":
+                        raise KiwiError("KiwiSDR:n släpper inte in fler program just nu")
+                    elif k == "badp" and v == "1":
+                        raise KiwiError("KiwiSDR:n kräver lösenord")
+            return None
+        vanta(1.5, False)
+        f = lo_khz
+        t0 = time.monotonic()
+        while f < hi_khz and time.monotonic() - t0 < timeout:
+            ws.send(f"SET MARKER db=0 min={f:.3f} max={min(hi_khz, f + steg_khz):.3f} zoom=10 width=1024 "
+                    f"eibi_types_mask=0x0 filter_tod=0 anti_clutter=0")
+            svar = vanta(4.0, True)
+            if svar:
+                try:
+                    lst = json.loads(svar)[1:]
+                except ValueError:
+                    lst = []
+                for d in lst:
+                    try:
+                        lage, tk = _dx_dekod(int(d.get("fl", 0)))
+                        key = (round(float(d["f"]), 2), d.get("i", ""))
+                        if key in sedda:
+                            continue
+                        sedda.add(key)
+                        ut.append({"f": float(d["f"]) * 1e3, "namn": str(d.get("i", ""))[:60], "lage": lage,
+                                   "typ": typer.get(tk, ""), "not": str(d.get("n", ""))[:120],
+                                   "b": int(d.get("b", 0) or 0), "e": int(d.get("e", 2400) or 2400)})
+                    except (KeyError, ValueError, TypeError):
+                        continue
+            ws.send("SET keepalive")
+            f += steg_khz
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+    log.info("KiwiSDR %s: %d DX-flaggor hämtade", host, len(ut))
+    return ut
 
 
 # ════════════════════════════════════════════════════════════════════

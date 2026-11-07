@@ -229,6 +229,7 @@ try:
     import kiwisdr
     import webbmottagare
     import dspfilter
+    import flaggor
 except ImportError as _e:  # pragma: no cover
     setup_logging()
     log.critical("Saknar Python-paket: %s. Installera med: sudo dnf install python3-numpy python3-scipy", _e)
@@ -338,7 +339,7 @@ BOOKMARK_VERSION = 2
 DEFAULT_CONF = {
     "source": "rtl", "tcp_addr": "127.0.0.1:1234", "kiwi_addr": "", "webrx_own": [], "my_pos": "", "auto_gain": True, "gain": 30.0, "ppm": 0,
     "agc_attack": 50.0, "agc_decay": 5.0,
-    "kiwi_auto_gain": True, "kiwi_gain": 65.0, "auto_sideband": True,
+    "kiwi_auto_gain": True, "kiwi_gain": 65.0, "auto_sideband": True, "flaggor_kiwi": True, "flaggor_visa": True,
     "dsp_shape": "SHARP", "pbt_lo": 0.0, "pbt_hi": 0.0, "nb_on": False, "nb_level": 50, "nb_depth": 8,
     "nb_width": 20, "nr_on": False, "nr_level": 6, "anotch_on": False, "mnotch_on": False,
     "mnotch_freq": 1000.0, "mnotch_width": "M", "tone_hpf": 0, "tone_lpf": 0, "tone_bass": 0, "tone_treble": 0,
@@ -2058,6 +2059,12 @@ def run_gui(args):
             dr.connect("drag-begin", self.on_drag_begin)
             dr.connect("drag-update", self.on_drag_update)
             self.add_controller(dr)
+            # högerklick utan att dra: flaggmeny (högerdrag flyttar fortfarande vattenfallet)
+            rc = Gtk.GestureClick(button=3)
+            rc.connect("released", self.on_right_click)
+            self.add_controller(rc)
+            self._flag_hits = []
+            self._drag_moved = False
             self._drag_c = None
 
         def _set_mouse(self, m):
@@ -2117,8 +2124,24 @@ def run_gui(args):
             spec_h = int(max(avail * self.win.conf["spec_frac"], min(70, avail * 0.6)))
             return band_h, spec_h, axis_h, band_h + spec_h + axis_h
 
+        def flag_at(self, x, y):
+            for x0, y0, x1, y1, fl in reversed(self._flag_hits):
+                if x0 - 2 <= x <= x1 + 2 and y0 - 2 <= y <= y1 + 2:
+                    return fl
+            return None
+
+        def on_right_click(self, g, n, x, y):
+            if self._drag_moved:
+                return
+            self.win.flagg_meny(self, x, y, self.x_to_f(x), self.flag_at(x, y))
+
         def on_click(self, g, n, x, y):
             w = self.win
+            fl = self.flag_at(x, y)
+            if fl is not None:                   # klick på en flagga: stäm in den
+                m = fl.get("lage") or None
+                w.tune(float(fl["f"]), m if m in MODES else None)
+                return
             st = w.step()
             fc = self.x_to_f(x)
             shift = bool(g.get_current_event_state() & Gdk.ModifierType.SHIFT_MASK)
@@ -2146,11 +2169,14 @@ def run_gui(args):
 
         def on_drag_begin(self, g, x, y):
             self._drag_c = self.win.engine.center
+            self._drag_moved = False
 
         def on_drag_update(self, g, dx, dy):
             if self._drag_c is None:
                 return
             lo, span = self.view()
+            if abs(dx) > 4 or abs(dy) > 4:
+                self._drag_moved = True
             newc = self._drag_c - dx / max(1, self.get_width()) * span
             if abs(newc - self.win.engine.center) > BIN_HZ * 20:
                 self.win.set_center_keep(newc)
@@ -2307,6 +2333,39 @@ def run_gui(args):
                     cr.fill()
                     cr.move_to(x + 4, yy)
                     cr.show_text(bm["name"])
+
+            # Flaggor (Kiwins + egna) längst ner i spektrumet, precis ovanför frekvensskalan/vattenfallet
+            self._flag_hits = []
+            if conf.get("flaggor_visa", True) and getattr(w, "flaggor", None) is not None:
+                fls = w.flaggor.synliga(lo, lo + span, conf.get("flaggor_kiwi", True))
+                if len(fls) <= 400:
+                    cr.set_font_size(9.5)
+                    yb = sy + spec_h - 2
+                    slut = [-1e9, -1e9]                  # där texten i rad 0/1 slutar
+                    for fl in fls:
+                        x = (fl["f"] - lo) / span * W
+                        r, g_, b_ = flaggor.farg(fl)
+                        cr.set_source_rgba(r, g_, b_, 0.95)
+                        cr.move_to(x, yb)
+                        cr.line_to(x - 3.5, yb - 6)
+                        cr.line_to(x + 3.5, yb - 6)
+                        cr.close_path()
+                        cr.fill()
+                        txt = fl.get("namn", "")[:28] + (" ✎" if fl.get("_egen") else "")
+                        ext = cr.text_extents(txt)
+                        rad = 0 if x > slut[0] + 4 else (1 if x > slut[1] + 4 else None)
+                        if rad is None:
+                            self._flag_hits.append((x - 4, yb - 7, x + 4, yb, fl))
+                            continue
+                        ty = yb - 9 - rad * 12
+                        cr.set_source_rgba(0, 0, 0, 0.55)
+                        cr.rectangle(x - 1, ty - ext.height - 1, ext.width + 4, ext.height + 3)
+                        cr.fill()
+                        cr.set_source_rgba(r, g_, b_, 1.0)
+                        cr.move_to(x + 1, ty)
+                        cr.show_text(txt)
+                        slut[rad] = x + ext.width + 4
+                        self._flag_hits.append((x - 4, ty - ext.height - 1, x + ext.width + 4, yb, fl))
 
             # Inställd kanal
             e = w.engine
@@ -4732,6 +4791,8 @@ def run_gui(args):
             right = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, wide_handle=True)
             right.add_css_class("delare")
             right.add_css_class("nedre-delare")
+            self.flaggor = flaggor.Flaggor(CONF_DIR, CACHE_DIR)
+            self.flaggor.on_change = lambda: GLib.idle_add(self._flaggor_andrade)
             self.view = SpectrumView(self)
             overlay = Gtk.Overlay()
             overlay.set_child(self.view)
@@ -5103,6 +5164,18 @@ def run_gui(args):
             self._refresh_scan_lists()
             self._on_scan_mode(c["scan_mode"])
             self._on_scan_sq_mode(c.get("scan_sq_mode", 0))
+
+            g = self._section("Flaggor", "Stationsetiketter ovanför vattenfallet. Klicka på en flagga för att stämma in "
+                                         "den, högerklicka för att lägga till eller ändra.")
+            self._switch(g, "Visa flaggor", c.get("flaggor_visa", True),
+                         lambda v: (self._set_conf("flaggor_visa", v)))
+            self._switch(g, "Hämta KiwiSDR:ns flaggor", c.get("flaggor_kiwi", True), self._on_flaggor_kiwi,
+                         "Kiwins egna etiketter när en KiwiSDR är källa")
+            self.flagg_status_row = Adw.ActionRow(title="Status", subtitle="–")
+            g.add(self.flagg_status_row)
+            self._button(g, "Hämta Kiwins flaggor igen", self._flaggor_hamta_om)
+            self._button(g, "🚩 Ny flagga på inställd frekvens …", lambda: self.flagg_dialog(None, self.freq))
+            box.append(g)
 
             g = self._section("Signallogg", "Hittar signaler automatiskt i hela bandet")
             self._switch(g, "Logga signaler", c["det_enabled"], self._on_det_enabled)
@@ -5527,6 +5600,133 @@ def run_gui(args):
             self.conf["freq"] = freq
             self._update_freq_label()
             self.view.queue_draw()
+
+        # ── flaggor ──
+        def _flaggor_andrade(self):
+            self.view.queue_draw()
+            r = getattr(self, "flagg_status_row", None)
+            if r is not None:
+                fl = self.flaggor
+                n_egna = sum(1 for x in fl.egna if x.get("kalla") != "dold")
+                n_kiwi = len(fl.kiwi.get(fl.kiwi_aktiv, [])) if fl.kiwi_aktiv else 0
+                r.set_subtitle(f"{n_egna} egna, {n_kiwi} från Kiwin" + (f" – {fl.status}" if fl.status else ""))
+            return False
+
+        def _on_flaggor_kiwi(self, v):
+            self.conf["flaggor_kiwi"] = v
+            src = self.engine.source
+            if v and self.engine.running and isinstance(src, KiwiSource):
+                self.flaggor.satt_kiwi(webbmottagare.norm_url(src.addr), src.addr)
+            self.view.queue_draw()
+
+        def _flaggor_hamta_om(self):
+            src = self.engine.source
+            if not (self.engine.running and isinstance(src, KiwiSource)):
+                self.toast("Starta mottagningen med en KiwiSDR som källa först")
+                return
+            self.flaggor.hamta(webbmottagare.norm_url(src.addr), src.addr)
+
+        def flagg_meny(self, widget, x, y, f_hz, fl):
+            """Högerklick i spektrumet: lägg till/ändra/ta bort flagga."""
+            pop = Gtk.Popover()
+            pop.set_parent(widget)
+            r = Gdk.Rectangle()
+            r.x, r.y, r.width, r.height = int(x), int(y), 1, 1
+            pop.set_pointing_to(r)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+
+            def knapp(text, cb):
+                b = Gtk.Button(label=text)
+                b.add_css_class("flat")
+                b.connect("clicked", lambda *_: (pop.popdown(), cb()))
+                box.append(b)
+            st = self.step()
+            f_r = round(f_hz / st) * st
+            if fl is not None:
+                box.append(Gtk.Label(label=f"<b>{GLib.markup_escape_text(fl.get('namn', ''))}</b>  "
+                                           f"{fl['f'] / 1e3:.2f} kHz {fl.get('lage', '')}", use_markup=True))
+                if fl.get("not"):
+                    box.append(Gtk.Label(label=fl["not"][:80], wrap=True, xalign=0, css_classes=["dim-label"]))
+                knapp("Stäm in", lambda: self.tune(float(fl["f"]), fl.get("lage") if fl.get("lage") in MODES else None))
+                knapp("Ändra flagga …", lambda: self.flagg_dialog(fl, fl["f"]))
+                if fl.get("_egen"):
+                    knapp("Ta bort flagga", lambda: self.flaggor.ta_bort(fl["id"]))
+                else:
+                    knapp("Dölj Kiwins flagga", lambda: self.flaggor.dolj_kiwi(fl))
+                box.append(Gtk.Separator())
+            knapp(f"Lägg till flagga på {f_r / 1e6:.4f} MHz …", lambda: self.flagg_dialog(None, f_r))
+            pop.set_child(box)
+            pop.connect("closed", lambda p_: p_.unparent())
+            pop.popup()
+
+        def flagg_dialog(self, fl, f_hz):
+            """Lägg till (fl=None) eller ändra en flagga. En ändrad Kiwi-flagga sparas som egen kopia."""
+            ny = fl is None
+            egen = bool(fl and fl.get("_egen"))
+            win = Adw.Window(title="Ny flagga" if ny else "Ändra flagga", modal=True, transient_for=self,
+                             default_width=420)
+            tv = Adw.ToolbarView()
+            tv.add_top_bar(Adw.HeaderBar())
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            for m in ("top", "bottom", "start", "end"):
+                getattr(box, f"set_margin_{m}")(12)
+            g = Adw.PreferencesGroup()
+            if fl and not egen:
+                g.set_description("Kiwins flagga ändras inte på Kiwin – ändringen sparas som din egen flagga "
+                                  "som visas i stället för Kiwins.")
+            namn = Adw.EntryRow(title="Namn")
+            namn.set_text((fl or {}).get("namn", ""))
+            g.add(namn)
+            frek = Adw.EntryRow(title="Frekvens (kHz)")
+            frek.set_text(f"{float(f_hz) / 1e3:.3f}")
+            g.add(frek)
+            lagen = flaggor.LAGEN
+            cur_l = (fl or {}).get("lage") or self.engine.mode
+            lage = Adw.ComboRow(title="Läge", model=Gtk.StringList.new(lagen))
+            lage.set_selected(lagen.index(cur_l) if cur_l in lagen else 0)
+            g.add(lage)
+            typer = flaggor.TYPER
+            cur_t = flaggor.typ_for(fl) if fl else "Övrigt"
+            typ = Adw.ComboRow(title="Typ", model=Gtk.StringList.new(typer))
+            typ.set_selected(typer.index(cur_t) if cur_t in typer else len(typer) - 1)
+            g.add(typ)
+            noter = Adw.EntryRow(title="Anteckning")
+            noter.set_text((fl or {}).get("not", ""))
+            g.add(noter)
+            tider = Adw.EntryRow(title="Sänder (UTC hhmm–hhmm)")
+            tider.set_text(f"{int((fl or {}).get('b', 0)):04d}-{int((fl or {}).get('e', 2400)):04d}")
+            g.add(tider)
+            box.append(g)
+            btns = Gtk.Box(spacing=8, halign=Gtk.Align.END)
+            avb = Gtk.Button(label="Avbryt")
+            avb.connect("clicked", lambda *_: win.close())
+            spara = Gtk.Button(label="Spara")
+            spara.add_css_class("suggested-action")
+            btns.append(avb)
+            btns.append(spara)
+            box.append(btns)
+
+            def on_spara(*_):
+                try:
+                    f_new = float(frek.get_text().replace(",", ".")) * 1e3
+                    bt, et = (tider.get_text().replace("–", "-").split("-") + ["2400"])[:2]
+                    b_, e_ = int(bt or 0), int(et or 2400)
+                except ValueError:
+                    self.toast("Frekvens eller tid gick inte att tolka")
+                    return
+                kw = dict(namn=namn.get_text().strip() or "Flagga", lage=lagen[lage.get_selected()],
+                          typ=typer[typ.get_selected()], noter=noter.get_text(), b=b_, e=e_)
+                if egen:
+                    self.flaggor.andra(fl["id"], f=f_new, namn=kw["namn"], lage=kw["lage"], typ=kw["typ"],
+                                       **{"not": kw["noter"]}, b=b_, e=e_)
+                else:
+                    self.flaggor.lagg_till(f_new, ersatter=flaggor.kiwi_nyckel(fl) if fl else None, **kw)
+                log.info("Flagga %s: %s %.3f kHz %s", "ny" if ny else "ändrad", kw["namn"], f_new / 1e3, kw["typ"])
+                win.close()
+            spara.connect("clicked", on_spara)
+            tv.set_content(box)
+            win.set_content(tv)
+            win.present()
 
         def _check_sideband(self):
             """Vid start: byt till brukligt sidband om det sparade läget är fel här (om inte handvalt)."""
@@ -6383,6 +6583,10 @@ def run_gui(args):
                 self._auto_level_pending = True
                 e.start(src)
                 self._check_sideband()                       # sparat läge kan vara fel sidband här
+                if isinstance(src, KiwiSource) and self.conf.get("flaggor_kiwi", True):
+                    self.flaggor.satt_kiwi(webbmottagare.norm_url(src.addr), src.addr)
+                else:
+                    self.flaggor.satt_kiwi(None, None)
                 btn.set_label("■ Stoppa")
                 btn.remove_css_class("suggested-action")
                 btn.add_css_class("destructive-action")
