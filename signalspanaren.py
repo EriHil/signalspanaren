@@ -29,7 +29,7 @@ import atexit
 
 APP_NAME = "Signalspanaren"
 APP_ID = "se.eh.Signalspanaren"
-VERSION = "2.10.1"
+VERSION = "2.10.2"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "signalspanaren")
@@ -313,6 +313,7 @@ BOOKMARK_VERSION = 2
 
 DEFAULT_CONF = {
     "source": "rtl", "tcp_addr": "127.0.0.1:1234", "kiwi_addr": "", "webrx_own": [], "my_pos": "", "auto_gain": True, "gain": 30.0, "ppm": 0,
+    "agc_attack": 50.0, "agc_decay": 5.0,
     "direct": 0, "biast": False, "freq": 100.0e6, "mode": "WFM", "bw": None, "squelch": -150.0,
     "volume": 80, "step_idx": 0, "db_min": -100.0, "db_max": -20.0, "zoom": 1, "spec_frac": 0.35,
     "colormap": "spanare", "theme": 0, "skin": "spanare", "analys_bw_idx": 0, "analys_follow": False, "scan_mode": 0, "scan_start": "144.0", "scan_stop": "146.0",
@@ -1046,6 +1047,10 @@ class Engine:
         self.center = 100e6
         self.squelch = -150.0
         self.volume = 0.8
+        self.agc_attack = 50.0      # 1/s, som SDR++ (reglage 1–200)
+        self.agc_decay = 5.0        # 1/s, som SDR++ (reglage 1–20)
+        self.agc_g = 1.0
+        self.agc_amp = None
         self.source = None
         self.thread = None
         self.running = False
@@ -1225,6 +1230,7 @@ class Engine:
             self.zh = np.zeros(max(len(self.bh), len(self.ah)) - 1)
             self._last = 0j
         self.agc_g = 1.0
+        self.agc_amp = None
 
     def _activity(self, a):
         """Mäter hur mycket ljudet varierar (tal/musik varierar, en ren bärvåg eller brus gör det inte)."""
@@ -1234,20 +1240,43 @@ class Engine:
         if len(self.act_hist) >= 50:
             self.activity = float(np.std(self.act_hist))
 
+    AGC_SETPOINT = 0.1       # medelnivå |x| ut (SDR++: 1,0 med maxOutputAmp 10 – samma förhållande)
+    AGC_MAX_OUT = 1.0        # topp som utlöser klippskyddet
+    AGC_MAX_GAIN = 1e5
+    AGC_DEC = 4              # nivåföljaren körs på 12 kHz (medel/topp av 4 sampel), förstärkningen interpoleras
+
     def _agc(self, a):
-        chunk = 240
-        n = len(a) // chunk
-        peaks = np.abs(a[:n * chunk]).reshape(n, chunk).max(axis=1)
-        gains = np.empty(n)
-        g = self.agc_g
-        for i, pk in enumerate(peaks):
-            tgt = min(0.5 / max(pk, 1e-6), 3000.0)
-            g = tgt if tgt < g else g + (tgt - g) * 0.02
-            gains[i] = g
-        self.agc_g = g
-        gs = np.repeat(gains, chunk)
-        if len(gs) < len(a):
-            gs = np.concatenate((gs, np.full(len(a) - len(gs), g)))
+        """AGC som i SDR++ (dsp/loop/agc.h): nivåföljare på |x| med attack/decay i 1/s (standard 50 och 5,
+        dvs. τ ≈ 20 ms upp och 200 ms ned), förstärkning = börvärde/nivå, och vid klippning sätts nivån
+        till största toppen i resten av blocket. Förstärkningen ändras mjukt per sampel (inga trappsteg)."""
+        D = self.AGC_DEC
+        n = len(a) // D * D
+        if n == 0:
+            return a * self.agc_g
+        ab = np.abs(a[:n]).reshape(-1, D)
+        env, pk = ab.mean(axis=1), ab.max(axis=1)
+        rmax = np.maximum.accumulate(pk[::-1])[::-1]          # största topp från k till blockets slut
+        at = min(1.0, self.agc_attack * D / AF)
+        de = min(1.0, self.agc_decay * D / AF)
+        sp, mo, gmax = self.AGC_SETPOINT, self.AGC_MAX_OUT, self.AGC_MAX_GAIN
+        amp = self.agc_amp
+        if amp is None:                                        # första blocket: börja på rätt nivå direkt
+            amp = max(float(env.mean()), sp / gmax)
+        g = np.empty(len(env))
+        for k in range(len(env)):
+            v = env[k]
+            if v > 0.0:
+                amp += (v - amp) * (at if v > amp else de)
+            gk = sp / amp if amp > sp / gmax else gmax
+            if pk[k] * gk > mo:                                # klippskydd (look-ahead i blocket)
+                amp = float(rmax[k])
+                gk = sp / amp
+            g[k] = gk
+        self.agc_amp = amp
+        # interpolera från förra blockets sista värde så att förstärkningen blir kontinuerlig
+        xs = np.concatenate(([-0.5 * D], np.arange(len(g)) * D + 0.5 * D))
+        gs = np.interp(np.arange(len(a)), xs, np.concatenate(([self.agc_g], g)))
+        self.agc_g = float(g[-1])
         return a * gs
 
     def _chan_bounds(self, mode, bw, off):
@@ -4611,6 +4640,8 @@ def run_gui(args):
             e.bw = conf["bw"] or DEFAULT_BW[e.mode]
             e.squelch = conf["squelch"]
             e.volume = conf["volume"] / 100
+            e.agc_attack = float(conf.get("agc_attack", 50.0))
+            e.agc_decay = float(conf.get("agc_decay", 5.0))
             e.auto_rec = conf["auto_rec"]
             e.detector.thresh = conf["det_thresh"]
             e.detector.enabled = conf["det_enabled"]
@@ -4914,6 +4945,12 @@ def run_gui(args):
             self.sq_row = self._spin(g, "Squelch (dB)", -150, 0, 1, c["squelch"], 0, self._on_squelch,
                                      "-150 = alltid öppen")
             self.vol_row = self._spin(g, "Volym (%)", 0, 300, 5, c["volume"], 0, self._on_volume)
+            self._spin(g, "AGC attack", 1, 200, 1, c.get("agc_attack", 50.0), 0,
+                       lambda v: self._set_agc("agc_attack", v),
+                       "AM/SSB/CW. Hur snabbt ljudet dras ned (SDR++: 50)")
+            self._spin(g, "AGC decay", 1, 20, 0.5, c.get("agc_decay", 5.0), 1,
+                       lambda v: self._set_agc("agc_decay", v),
+                       "Hur snabbt ljudet återhämtar sig – lägre = mindre brus mellan orden (SDR++: 5)")
             self.step_row = self._combo(g, "Frekvenssteg", STEP_NAMES, c["step_idx"],
                                         lambda i: self._set_conf("step_idx", i))
             box.append(g)
@@ -5334,7 +5371,11 @@ def run_gui(args):
             elif not self.conf.get("direct") and freq < 24e6 <= self.freq:
                 self.toast("Under 24 MHz behövs direktsampling (Mottagare → Direktsampling → Q-gren)")
             if mode and mode in MODES and mode != e.mode:
-                self.set_mode(mode)
+                self._in_tune = True
+                try:
+                    self.set_mode(mode)
+                finally:
+                    self._in_tune = False
             d = freq - e.center
             ok_offset = abs(d) <= SR * 0.42 and abs(d) >= e.bw / 2 + 3000
             if e.running and getattr(e.source, "fixed_center", False):
@@ -5353,8 +5394,9 @@ def run_gui(args):
                 ok_offset = max(abs(lo), abs(hi)) <= e.source.narrow_rate * 0.40
                 if not ok_offset:
                     mid = (lo + hi) / 2 - d                  # kanalens mitt relativt den inställda frekvensen
-                    e.set_center(freq + mid)
-                    d = -mid
+                    if abs(e.center - (freq + mid)) > 1:     # redan centrerad (bredare än Kiwins band)?
+                        e.set_center(freq + mid)
+                    d = freq - e.center
                     ok_offset = True
             if not (ok_offset or keep_center):
                 newc = freq + SR * 0.15
@@ -5383,7 +5425,7 @@ def run_gui(args):
             d = self.freq - c
             if e.running and isinstance(e.source, KiwiSource):
                 lo, hi = e._chan_bounds(e.mode, e.bw, d)
-                if max(abs(lo), abs(hi)) > e.source.narrow_rate * 0.45:
+                if max(abs(lo), abs(hi)) > e.source.narrow_rate * 0.40:
                     d = d - (lo + hi) / 2                    # kanalen hamnar mitt i Kiwins band
                     self.freq = c + d
             if abs(d) > SR * 0.45:
@@ -5402,6 +5444,8 @@ def run_gui(args):
             self.mode_dd.set_selected(MODES.index(mode))
             self.bw_row.set_value(e.bw)
             self._updating = False
+            if not getattr(self, "_in_tune", False):
+                self._refit_kiwi()                           # frontpanel, skannerförval m.fl.
             self.view.queue_draw()
 
         def set_zoom(self, z):
@@ -5463,7 +5507,6 @@ def run_gui(args):
             if self._updating:
                 return
             self.set_mode(MODES[dd.get_selected()])
-            self._refit_kiwi()
 
         def _on_bw(self, v):
             if self._updating:
@@ -5476,6 +5519,10 @@ def run_gui(args):
         def _on_squelch(self, v):
             self.engine.squelch = v
             self.conf["squelch"] = v
+
+        def _set_agc(self, k, v):
+            self.conf[k] = float(v)
+            setattr(self.engine, k, float(v))
 
         def _on_volume(self, v):
             self.engine.volume = v / 100
@@ -5683,6 +5730,9 @@ def run_gui(args):
 
         def _ppm_kiwi_key(self):
             """Nyckel för Kiwins egen frekvenskorrigering (None när källan inte är en KiwiSDR)."""
+            src = self.engine.source
+            if self.engine.running and isinstance(src, KiwiSource):
+                return webbmottagare.norm_url(src.addr)      # den Kiwi som faktiskt körs
             if self.conf.get("source") != "kiwi" or not self.conf.get("kiwi_addr", "").strip():
                 return None
             return webbmottagare.norm_url(self.conf["kiwi_addr"])

@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 2.10.2 (2026-11-07)
+
+- **Ny AGC för AM, SSB och CW, som i SDR++.** Den gamla AGC:n satte förstärkningen i trappsteg var 5:e ms. Den drog ned direkt på varje topp och tog upp bruset med ca 6 dB i varje paus. Den nya följer nivån mjukt (attack τ ≈ 20 ms, decay τ ≈ 200 ms) och har klippskydd som tittar framåt i blocket. Förstärkningen ändras per sampel. Mätt på riktig LSB-trafik via KiwiSDR: skillnaden mellan tal och pauser är 13 dB, som i signalen, i stället för 6–7 dB. Klick och surr (energi över 3,5 kHz) är 11 dB lägre. Resultatet ligger inom 1 dB från en återskapad SDR++-kedja. Ljudet är ca 6 dB svagare än förut, så höj volymen vid behov.
+- Nya reglage under Demodulator: **AGC attack** (1–200, standard 50) och **AGC decay** (1–20, standard 5), samma skalor som i SDR++.
+- KiwiSDR: Kiwin anpassas vid alla lägesbyten, även från frontpanelen och skannerns bandförval. Att dra i vattenfallet använder samma gräns för Kiwins band som vanlig inställning. En kanal som är bredare än Kiwins band stämmer inte om Kiwin till samma mitt vid varje steg.
+- Kalibreringen mäter inte gammal data direkt efter byte av frekvens eller korrigering. Den räknar och sparar mot den Kiwi som faktiskt körs.
+
 ## 2.10.1 (2026-11-07)
 
 - **USB/LSB via KiwiSDR låter rätt igen.** Programmet räknade som om kanalen låg symmetriskt runt den inställda frekvensen, men USB och LSB ligger helt på ena sidan. Därför stämdes Kiwin inte om när en SSB-station låg 3–4 kHz från Kiwins mitt. En del av talet hamnade då utanför Kiwins ca 12 kHz breda band och byttes mot brus, så talet blev dovt och brusigt. Nu räknar programmet med kanalens verkliga kanter och lägger kanalens mitt i Kiwins mitt. Kontrollen görs också vid byte av läge eller bandbredd.

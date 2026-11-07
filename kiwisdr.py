@@ -401,6 +401,9 @@ class KiwiSource:
             self._pending[key] = val
         if key == "freq":
             self.center = float(val)
+        if key in ("freq", "ppm") and getattr(self, "_rlock", None) is not None:
+            with self._rlock:                      # gammal data får inte mätas mot ny mitt/korrigering
+                self._recent.clear()
 
     def _take(self):
         with self._plock:
