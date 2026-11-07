@@ -274,7 +274,7 @@ def ssb_zone(f):
     return "USB", "usb"
 
 
-# AGC-förval: (namn, decay i 1/s). IC-7300 anger tidskonstanter för SSB (FAST/MID/SLOW ≈ 0,3/2/6 s).
+# AGC-förval: (namn, decay i 1/s). FAST/MID/SLOW ≈ tidskonstanter 0,3/2/6 s.
 AGC_PRESETS = [("SDR++ (τ 0,2 s)", 5.0), ("FAST (0,3 s)", 1 / 0.3), ("MID (2 s)", 0.5), ("SLOW (6 s)", 1 / 6),
                ("Eget", None)]
 
@@ -1079,7 +1079,7 @@ class Engine:
         self.agc_decay = 5.0        # 1/s, som SDR++ (reglage 1–20)
         self.agc_g = 1.0
         self.agc_amp = None
-        # DSP-filter i IC-7300-stil (dspfilter.py)
+        # DSP-filter (dspfilter.py)
         self.shape = "SHARP"         # kanalfiltrets form: SHARP/SOFT
         self.pbt_lo = 0.0            # twin PBT: flytt av nedre/övre kanten (Hz, + = uppåt i frekvens)
         self.pbt_hi = 0.0
@@ -5007,7 +5007,7 @@ def run_gui(args):
                        "Hur snabbt ljudet återhämtar sig – lägre = mindre brus mellan orden (SDR++: 5)")
             self.step_row = self._combo(g, "Frekvenssteg", STEP_NAMES, c["step_idx"],
                                         lambda i: self._set_conf("step_idx", i))
-            self._button(g, "🎛 DSP-filter (som IC-7300)", self._open_dsp).set_tooltip_text(
+            self._button(g, "🎛 DSP-filter", self._open_dsp).set_tooltip_text(
                 "Visar/döljer en panel till höger om vattenfallet med filterform, PBT, brusreducering, notch, "
                 "störningsblankare och tonkontroll – går att använda medan du lyssnar")
             self._switch(g, "Automatiskt sidband", c.get("auto_sideband", True),
@@ -5609,7 +5609,7 @@ def run_gui(args):
             self.engine.bw = float(v)
             self.conf["bw"] = float(v)
             if self.conf.get("pbt_lo") or self.conf.get("pbt_hi"):
-                self._pbt_reset()                            # som IC-7300: ny bredd nollställer PBT
+                self._pbt_reset()                            # ny bredd nollställer PBT
             self._refit_kiwi()
             self.view.queue_draw()
 
@@ -5640,7 +5640,7 @@ def run_gui(args):
             self.agc_decay_row.set_value(round(d, 2))
             self._agc_loading = False
 
-        # ── DSP-filter i IC-7300-stil (dspfilter.py) ──
+        # ── DSP-filter (dspfilter.py) ──
         def _apply_dsp_conf(self):
             """Kopierar DSP-inställningarna från conf till motorn."""
             c, e = self.conf, self.engine
@@ -5676,7 +5676,7 @@ def run_gui(args):
                 return
             lst = dspfilter.FIL_PRESETS.get(self.engine.mode)
             if lst:
-                self.bw_row.set_value(lst[i])            # → _on_bw (nollställer PBT, som IC-7300)
+                self.bw_row.set_value(lst[i])            # → _on_bw (nollställer PBT)
 
         def _open_dsp(self, *_):
             """Visar/döljer DSP-panelen. Den svävar ovanpå den nedre delen av fönstret (till höger över
@@ -5687,7 +5687,7 @@ def run_gui(args):
                 head = Gtk.Box(spacing=6)
                 for m in ("top", "start", "end"):
                     getattr(head, f"set_margin_{m}")(8)
-                head.append(Gtk.Label(label="<b>DSP-filter (som IC-7300)</b>", use_markup=True, xalign=0, hexpand=True))
+                head.append(Gtk.Label(label="<b>DSP-filter</b>", use_markup=True, xalign=0, hexpand=True))
                 close = Gtk.Button(icon_name="window-close-symbolic", tooltip_text="Dölj DSP-panelen")
                 close.add_css_class("flat")
                 close.connect("clicked", lambda *_: self._open_dsp())
@@ -5729,9 +5729,9 @@ def run_gui(args):
             self._fil_loading = False
 
         def _build_dsp_rows(self, box, c):
-            g = self._section(None, "Digitala mottagningsfilter för AM/SSB/CW i stil med Icom IC-7300.")
+            g = self._section(None, "Digitala mottagningsfilter för AM/SSB/CW.")
             self.fil_row = self._combo(g, "Filterförval", ["FIL1 – bred", "FIL2 – mellan", "FIL3 – smal"], 0, self._on_fil)
-            self.fil_row.set_tooltip_text("SSB 3,0/2,4/1,8 kHz, CW 1,2/0,5/0,25 kHz, AM 9/6/3 kHz (som IC-7300)")
+            self.fil_row.set_tooltip_text("SSB 3,0/2,4/1,8 kHz, CW 1,2/0,5/0,25 kHz, AM 9/6/3 kHz")
             shapes = list(dspfilter.SHAPES)
             self._combo(g, "Filterform", ["SHARP – branta kanter", "SOFT – mjukare ljud"],
                         shapes.index(c.get("dsp_shape", "SHARP")) if c.get("dsp_shape") in shapes else 0,
@@ -5764,7 +5764,7 @@ def run_gui(args):
             self._spin(g, "NB-bredd", 1, 100, 1, c.get("nb_width", 20), 0, lambda v: self._dsp_set("nb_width", int(v)),
                        "Blankningstid, 10 µs per steg")
             self._spin(g, "RX HPF (Hz)", 0, 2000, 100, c.get("tone_hpf", 0), 0, lambda v: self._dsp_set("tone_hpf", int(v)),
-                       "0 = av. När HPF/LPF används nollas bas/diskant (som IC-7300)")
+                       "0 = av. När HPF/LPF används nollas bas/diskant")
             self._spin(g, "RX LPF (Hz)", 0, 5000, 100, c.get("tone_lpf", 0), 0, lambda v: self._dsp_set("tone_lpf", int(v)),
                        "0 = av")
             self._spin(g, "RX bas", -5, 5, 1, c.get("tone_bass", 0), 0, lambda v: self._dsp_set("tone_bass", int(v)),

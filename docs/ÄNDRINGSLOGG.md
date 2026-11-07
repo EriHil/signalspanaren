@@ -2,10 +2,10 @@
 
 ## 2.12.0 (2026-11-07)
 
-- **DSP-filter i stil med Icom IC-7300** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter (som IC-7300)** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:
-  - **Filterförval FIL1/FIL2/FIL3**: SSB 3,0/2,4/1,8 kHz, CW 1,2/0,5/0,25 kHz och AM 9/6/3 kHz, som i IC-7300.
+- **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:
+  - **Filterförval FIL1/FIL2/FIL3**: SSB 3,0/2,4/1,8 kHz, CW 1,2/0,5/0,25 kHz och AM 9/6/3 kHz.
   - **Filterform SHARP/SOFT**. SHARP har ca 150 Hz övergång, −48 dB 150 Hz utanför kanten och fel sidband helt borta. SOFT har mjukare flanker och mindre ringning.
-  - **Twin PBT**: nedre och övre kanten flyttas var för sig i steg om 50 Hz. Ny bandbredd nollställer PBT, som i IC-7300.
+  - **Twin PBT**: nedre och övre kanten flyttas var för sig i steg om 50 Hz. Ny bandbredd nollställer PBT.
   - **Brusreducering (NR)** nivå 1–15 (Wiener med beslutsstyrd SNR och minimistatistik). På riktig trafik ökar kontrasten mellan tal och paus med 5–9 dB vid nivå 8, och talet blir inte svagare.
   - **Auto-notch (AN)** tar bort toner som ligger still (−30 dB) men inte tal. **Manuell notch (MN)** på vald ljudfrekvens, med bredd W/M/N.
   - **Störningsblankare (NB)** med nivå, djup och bredd. Den arbetar på bredbandig IQ (384 kHz) innan kanalfiltret.

@@ -1,4 +1,4 @@
-"""DSP-filter i stil med Icom IC-7300 för Signalspanaren.
+"""DSP-filter för Signalspanaren.
 
 Allt räknas på ljud-/kanalsidan efter nedblandning (48 kHz), utom störningsblankaren som arbetar på
 bredbandig IQ (384 kHz) innan kanalfiltret, eftersom pulsstörningar är bredbandiga och smetas ut av
@@ -6,7 +6,7 @@ smala filter.
 
   ChannelFilter   – komplext kanalfilter med form SHARP/SOFT och twin PBT (kanterna var för sig)
   NoiseBlanker    – pulsblankare: nivå (tröskel), djup (dämpning), bredd (blankningstid)
-  ToneControl     – RX HPF/LPF och bas/diskant (som IC-7300 "Tone Control")
+  ToneControl     – RX HPF/LPF och bas/diskant (tonkontroll)
   ManualNotch     – smal IIR-notch på vald ljudfrekvens, bredd W/M/N
   SpectralNR      – brusreducering (Wiener med beslutsstyrd SNR och minimistatistik) och
                     auto-notch (tar bort stationära toner) i samma STFT
@@ -26,7 +26,7 @@ SHAPES = {
     "SOFT": (255, "hann"),
 }
 
-# IC-7300-förval FIL1/FIL2/FIL3 per läge (Hz)
+# Förval FIL1/FIL2/FIL3 per läge (Hz)
 FIL_PRESETS = {
     "USB": (3000, 2400, 1800),
     "LSB": (3000, 2400, 1800),
@@ -91,7 +91,7 @@ def channel_taps(lo, hi, fs, shape, center_shift=0.0):
 # Störningsblankare (på bredbandig IQ)
 # ════════════════════════════════════════════════════════════════════
 class NoiseBlanker:
-    """Pulsblankare som IC-7300 NB: LEV (tröskel), DEP (dämpning) och WID (blankningstid).
+    """Pulsblankare: LEV (tröskel), DEP (dämpning) och WID (blankningstid).
     Tröskeln är relativ medianen av |x| i blocket – robust mot själva pulserna."""
 
     def __init__(self, fs):
@@ -147,7 +147,7 @@ def _shelf(fs, f0, gain_db, high):
 
 
 class ToneControl:
-    """RX HPF/LPF (Hz, 0 = av) och bas/diskant (−5…+5, 2 dB per steg). Som på IC-7300 nollas bas/diskant
+    """RX HPF/LPF (Hz, 0 = av) och bas/diskant (−5…+5, 2 dB per steg). Bas/diskant nollas
     när HPF/LPF används. default_hp: lägets eget högpass när HPF är av (AM 60, NFM 250, övriga 100 Hz)."""
 
     def __init__(self, fs):
