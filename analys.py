@@ -1644,6 +1644,13 @@ class Analyzer:
         vals, new = [], ""
         locked = [dd for dd in self.dec if dd.har_synk() and getattr(dd, "_ok_feat", None) is not None
                   and now - dd._ok_t < 4]
+        passar_namn, kord = [], []
+        for dd in self.dec:
+            try:
+                if dd.passar(feat):
+                    passar_namn.append(dd.namn)
+            except Exception:
+                pass
         for dd in self.dec:
             if locked and dd not in locked and self.tvinga is None:
                 continue
@@ -1665,6 +1672,7 @@ class Analyzer:
                 if zd is None or not len(zd):
                     continue
                 txt = dd.feed(zd, fs, use)
+                kord.append(dd.namn)
                 if txt:
                     self.text_q.append((dd.namn, txt))
                     new += txt
@@ -1689,6 +1697,15 @@ class Analyzer:
             feat["kandidater"] = signaldb.match(feat, f_abs, self.db, ac)
         self._lock_candidate(feat, feat.get("kandidater") or [], now)
         self._sakerhet(feat)
+        baud, shift, bw = feat.get("baud"), feat.get("shift"), feat.get("occ_bw")
+        kand = feat.get("kandidat")
+        kand_namn = kand[1].get("namn") if kand and isinstance(kand[1], dict) else "–"
+        log.info("Analyssteg %.6f MHz: uppmätt %s / %s, %s Bd, shift %s Hz, bandbredd %s Hz, kandidat %s (%s), "
+                 "passar %s, avkodare %s, text %d tecken",
+                 f_abs / 1e6, feat.get("fam"), feat.get("klass"),
+                 f"{baud:.2f}" if baud else "–", f"{shift:.0f}" if shift else "–", f"{bw:.0f}" if bw else "–",
+                 kand_namn, "låst" if feat.get("kandidat_las") else "ej låst",
+                 ", ".join(passar_namn) or "–", ", ".join(kord) or "–", len(new))
         self.result = feat
         self.result_id += 1
         return feat, new
