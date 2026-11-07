@@ -5162,11 +5162,46 @@ def run_gui(args):
                     plain_text(ch)
                     ch = ch.get_next_sibling()
             plain_text(box)
+            self._make_collapsible(box)
 
             sw = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
             sw.set_child(box)
             sw.set_size_request(280, -1)
             return sw
+
+        def _make_collapsible(self, box):
+            """Gör varje sektion i sidopanelen hopfällbar (klicka på rubriken). Hopfällda sparas i conf."""
+            hopfallda = set(self.conf.get("sidebar_collapsed") or [])
+            self._section_wraps = {}
+            g = box.get_first_child()
+            while g is not None:
+                nxt = g.get_next_sibling()
+                if isinstance(g, Adw.PreferencesGroup) and g.get_title():
+                    title = g.get_title()
+                    prev = g.get_prev_sibling()
+                    vis = g.get_visible()
+                    box.remove(g)
+                    g.set_title("")
+                    g.set_visible(True)
+                    exp = Gtk.Expander(label=f"<b>{GLib.markup_escape_text(title)}</b>", use_markup=True,
+                                       expanded=title not in hopfallda)
+                    exp.set_tooltip_text("Klicka för att fälla ihop/fälla ut")
+                    exp.set_child(g)
+                    exp.set_visible(vis)
+                    exp.connect("notify::expanded", lambda e, _p, t=title: self._on_section_toggled(t, e.get_expanded()))
+                    box.insert_child_after(exp, prev)
+                    self._section_wraps[g] = exp
+                g = nxt
+
+        def _on_section_toggled(self, title, expanded):
+            lst = [t for t in (self.conf.get("sidebar_collapsed") or []) if t != title]
+            if not expanded:
+                lst.append(title)
+            self.conf["sidebar_collapsed"] = lst
+
+        def _section_visible(self, g, vis):
+            """Visa/dölj en sektion (eller dess hopfällbara omslag)."""
+            (getattr(self, "_section_wraps", {}).get(g) or g).set_visible(vis)
 
         def _build_bottom(self):
             nb = Gtk.Notebook()
@@ -5789,7 +5824,7 @@ def run_gui(args):
                 self._choose_play_file()
 
         def _show_source_rows(self, src):
-            self.play_group.set_visible(src == "file")
+            self._section_visible(self.play_group, src == "file")
             self.tcp_row.set_visible(src == "tcp")
             self.kiwi_row.set_visible(src == "kiwi")
             for i, r in enumerate(self.hw_rows):

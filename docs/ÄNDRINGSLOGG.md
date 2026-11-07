@@ -4,6 +4,12 @@
 
 - **Rättat: krasch i signalanalysens spektrum** (`KeyError: 'f_lo'`). Vissa klassningar satte signalens bredd utan kantfrekvenser, bland annat linjära modem som STANAG 4539 och FT8/FT4-detektorn. Ritningen förutsatte att kanterna fanns och kraschade vid varje omritning. Nu sätts kanterna alltid, och ritningen räknar ut dem från mitt och bredd om de ändå saknas. Upptäckt på Shannon VOLMET 5505 kHz, där analysen ibland gissade STANAG 4539.
 - **Tal klassas inte längre som modem eller FM.** På VOLMET blev vart fjärde analyssteg "Digital linjär" och föreslog STANAG 4539. Talets grundton (5,7 ms ≈ 175 Hz) och sökningens nedre gräns (20 ms) togs för en modemram, och sökningen godtog ett "maximum" som bara var gränsen. Nu krävs en verklig topp. Tal med stavelsevariation (minst 1,5 dB) klassas inte som LIN, varken direkt eller via ramminnet. Svagt SSB-tal i brus blev ofta "FM", men FM kräver nu konstant envelope (stavelsevariation under 2 dB). En bandbredd där bruset dominerar (SNR under 0 dB) blir "brus" i stället för FM.
+- **Testat mot KiwiSDR:ns stationsflaggor** (VOLMET, STANAG, HFDL, FAX, väder-RTTY, marin FSK, RWM, CHU). Rättat:
+  - **Nycklade bärvågar** blir OOK och inte AM/SSB/okänd. Exempel är RWM:s tidspulser, vars hårda nyckling ger breda nyckelklick, och svag nyckling där av/på-detektorn ger upp i bruset.
+  - **Smala signaler där en bärvåg dominerar** blir bärvåg och inte FM (CHU på långt håll). FM kräver nu minst 1,5 kHz bredd, och SSB minst 800 Hz.
+  - **FSK där man klickar mellan tonerna** (850 Hz shift): bandbredden fastnade mellan tonerna och gav "brus". Nu hittas två toner på var sin sida om klicket. Två smala toner som bär nästan all effekt räknas som FSK2 även när signalen är för svag för tonhistogrammet.
+  - **Förslaget byter snabbare** när det låsta förslaget inte längre passar alls, till exempel "SSB-tal" efter att mätningen visat FSK.
+- **Hopfällbara sektioner i sidopanelen:** klicka på en rubrik för att fälla ihop eller fälla ut den. Läget sparas.
 - **Fyra nya facit-klipp med riktigt tal:** Shannon VOLMET 5505 kHz USB, 40 m LSB (svag), samt en tysk och en finsk station på 80 m. Signalfamiljen blir rätt på 42 av 42 klipp. STANAG 4285, PSK och FT8 känns igen som förut.
 
 ## 2.12.0 (2026-11-07)

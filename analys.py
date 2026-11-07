@@ -303,6 +303,35 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0):
     return r
 
 
+def _fsk_par(z, fs, survey_bw, max_shift=1200.0):
+    """Två toner på var sin sida om mitten (klick mellan FSK-tonerna). Returnerar (mitt, bredd, False)
+    eller None. Tonerna ska vara högst 15 dB olika starka och 100–max_shift Hz isär."""
+    nfft = int(np.clip(_pow2(fs / 10.0), 256, 16384))
+    while nfft > 256 and len(z) // nfft < 8:
+        nfft //= 2
+    f, P = _welch(np.asarray(z, np.complex64), fs, nfft)
+    sel = np.abs(f) <= min(survey_bw / 2, max_shift)
+    f, Pd = f[sel], 10 * np.log10(P[sel] + 1e-30)
+    if len(f) < 16:
+        return None
+    floor = float(np.percentile(10 * np.log10(P + 1e-30), 20))
+    vl, hl = f < -20, f > 20
+    if not vl.any() or not hl.any():
+        return None
+    kl = np.flatnonzero(vl)[np.argmax(Pd[vl])]
+    kh = np.flatnonzero(hl)[np.argmax(Pd[hl])]
+    a, b = float(Pd[kl]), float(Pd[kh])
+    sep = float(f[kh] - f[kl])
+    if min(a, b) < floor + 10 or abs(a - b) > 15 or not (100.0 <= sep <= max_shift):
+        return None
+    # mellan tonerna ska det vara en svacka (annars är det en bred signal, inte två toner)
+    mellan = Pd[kl + 1:kh]
+    if len(mellan) and float(np.median(mellan)) > min(a, b) - 10:
+        return None
+    mid = float(f[kl] + f[kh]) / 2
+    return mid, sep + 150.0, False
+
+
 def _fit_res(z, fs, survey_bw, near_hz, nfft):
     N = len(z)
     f, P = _welch(z, fs, nfft)
@@ -369,6 +398,8 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
         rest = np.r_[Pd[a:max(a, k0 - w)], Pd[k0 + w + 1:b + 1]]
         if len(rest) and float(rest.max()) > Pd[k0] - 8:
             barvag = False
+    if barvag and b - a > 8 and float(np.mean(above[a:b + 1])) < 0.3:
+        barvag = False      # glesa brustoppar kring en ensam bärvåg (RWM) är inga AM-sidband
     if barvag:
         # AM: bärvågen är mitten och sidbanden är lika breda – den bredare sidan räknas (den smalare
         # har ofta ett hål i talet), men inte bredare än vad som ryms i överblicken
@@ -676,6 +707,21 @@ def analyze(z, fs, bw):
                 ntones = int(round(occ / t_sp))
                 regular = True
     out["tonraster"] = acf_str
+    # två smala toner som bär nästan all effekt (FSK även när momentanfrekvensen är för brusig)
+    tva_toner = None
+    if sel.sum() > 8:
+        Ps_ = Pin[sel] - floor
+        tp2, pr2 = find_peaks(sdb, prominence=8, distance=max(2, int(60 / res)))
+        if len(tp2) >= 2:
+            o = np.argsort(sdb[tp2])[::-1][:2]
+            k1, k2 = sorted(tp2[o])
+            sep2 = float(fin[sel][k2] - fin[sel][k1])
+            w2 = max(2, int(round(max(40.0, 3 * res) / res)))
+            lob = sum(float(np.clip(Ps_[max(0, k - w2):k + w2 + 1], 0, None).sum()) for k in (k1, k2))
+            tot2 = float(np.clip(Ps_, 0, None).sum()) + 1e-30
+            if 100.0 <= sep2 <= 1200.0 and lob / tot2 >= 0.7 and abs(sdb[k1] - sdb[k2]) <= 15:
+                tva_toner = (sep2, float(fin[sel][k1]), float(fin[sel][k2]))
+    out["tva_toner"] = tva_toner[0] if tva_toner else None
     flat = float(np.exp(np.mean(np.log(Pin[sel] + 1e-30))) / (np.mean(Pin[sel]) + 1e-30)) if sel.any() else 0.0
     out.update(spec_toner=tf.tolist(), n_spec_toner=ntones, tonavstand=t_sp, flathet=flat)
 
@@ -712,6 +758,10 @@ def analyze(z, fs, bw):
         fam = "OOK"
     elif narrow and cv_c < 0.2 and not onoff:
         fam = "BÄRVÅG"
+    elif onoff and car_frac >= 0.3 and nlev <= 1 and not psk:
+        # nycklad bärvåg (RWM:s tidspulser, CW): hård nyckling ger breda nyckelklick som ser ut som
+        # AM-sidband, men AM-rundradio har en bärvåg som är på hela tiden
+        fam = "OOK"
     elif car_frac >= 0.4 and cv_c > 0.06 and not narrow and out.get("spegel", 0) >= 0.45:
         fam = "AM"                 # bärvågen bär större delen av effekten (OFDM-piloter: några procent)
     elif psk:
@@ -739,16 +789,31 @@ def analyze(z, fs, bw):
         fam = "AM"
     elif baud and bstr >= 14 and cv_c > 0.15 and syll < 1.5:
         fam = "LIN"
+    elif tva_toner and not psk:
+        fam = "FSK2"               # två toner i spektrumet (svag FSK där histogrammet smetats ut)
+        shift = tva_toner[0]
+        nlev = 2
+        tones = np.array(tva_toner[1:])
+    elif car_frac >= 0.5 and occ < 800:
+        # smal signal där bärvågen bär effekten (CHU/RWM på långt håll: bärvåg + svaga sidband);
+        # kraftigt varierande envelope = nycklad (RWM:s tidspulser, CW), annars en bärvåg
+        fam = "OOK" if (onoff or cv_c >= 0.35) else "BÄRVÅG"
+    elif occ < 400 and out.get("duty", 1.0) < 0.6 and cv_c >= 0.3 and car_frac >= 0.15 and nlev <= 1 and not psk:
+        # svag nycklad bärvåg: av/på-detektorn ger upp i bruset, men påslagstiden och bärvågen syns
+        fam = "OOK"
+    elif onoff and occ < 800 and nlev <= 1:
+        # smal, nyckelad signal (CW, RWM:s tidspulser) – inte SSB även om envelopen varierar mycket
+        fam = "OOK"
     elif out.get("snr", 0.0) < 0.0 and cv_c < 0.3 and syll < 2.0:
         # mer brus än signal i den upptagna bandbredden och ingen envelope-/stavelsevariation:
         # brusets konstanta medel-envelope ser annars ut som FM (uppmätt i talpauser på 80 m)
         fam = "BRUS"
-    elif cv_c < 0.3 and dev > max(3 * res, 0.08 * occ) and syll < 2.0:
+    elif cv_c < 0.3 and dev > max(3 * res, 0.08 * occ) and syll < 2.0 and occ >= 1500:
         # FM har konstant envelope (liten ljudvariation); svagt SSB-tal i brus kan få låg cv men behåller
         # stavelsernas nivåvariation (3–4 dB uppmätt på riktig 40/80 m-trafik)
         fam = "FM"
-    elif cv_c >= 0.3 or (syll >= 2.0 and occ >= 1000):
-        fam = "SSB"
+    elif occ >= 800 and (cv_c >= 0.3 or (syll >= 2.0 and occ >= 1000)):
+        fam = "SSB"                # SSB-tal är minst ca 1,5 kHz brett
     else:
         fam = "OKÄND"
     out["fam"] = fam
@@ -1436,6 +1501,10 @@ class Analyzer:
         z = snap[0]
         ft["tries"] += 1
         r = fit_bandwidth(z, fs, ft["survey"], near_hz=max(200.0, ft["guess"] * 0.5))
+        if r is None:
+            # klick mellan FSK-tonerna (shift upp till ca 1,2 kHz): bandbreddsmätningen delar vid svackan
+            # mellan tonerna och ser ingen signal vid klicket
+            r = _fsk_par(z, fs, ft["survey"])
         if r is not None and r[2] and ft["survey"] < ft["cap"] and ft["tries"] < self.FIT_MAX_TRIES:
             ft["survey"] = min(ft["cap"], ft["survey"] * 3.0)      # signalen är bredare än överblicken
             self.tap.set_target(tgt, ft["survey"])
@@ -1485,7 +1554,9 @@ class Analyzer:
             if cur is not None and cur[0] >= self.LOCK_SCORE - 10:
                 lock["score"] = cur[0]
                 lock["last"] = now
-            if name and name != lock["namn"] and self._lock_top_n >= self.LOCK_SWITCH_STEPS:
+            # den låsta typen passar inte längre alls (t.ex. "SSB-tal" när mätningen visar FSK): byt snabbare
+            behov = self.LOCK_STEPS if cur is None else self.LOCK_SWITCH_STEPS
+            if name and name != lock["namn"] and self._lock_top_n >= behov:
                 # En ny typ har legat högst tillräckligt länge – följ den i stället.
                 self.signal_lock = {"namn": name, "post": top[1], "score": top[0], "last": now}
                 log.info("Signalanalys: byter lås till %s (%.0f %%)", name, top[0])
