@@ -5328,6 +5328,7 @@ def run_gui(args):
             right.add_css_class("delare")
             right.add_css_class("nedre-delare")
             self.flaggor = flaggor.Flaggor(CONF_DIR, CACHE_DIR)
+            self.flaggor.kiwi_upptagen = lambda: self.engine.running and isinstance(self.engine.source, KiwiSource)
             self.flaggor.on_change = lambda: GLib.idle_add(self._flaggor_andrade)
             self.view = SpectrumView(self)
             overlay = Gtk.Overlay()
@@ -6194,7 +6195,8 @@ def run_gui(args):
             if not (self.engine.running and isinstance(src, KiwiSource)):
                 self.toast("Starta mottagningen med en KiwiSDR som källa först")
                 return
-            self.flaggor.hamta(webbmottagare.norm_url(src.addr), src.addr)
+            if not self.flaggor.hamta(webbmottagare.norm_url(src.addr), src.addr):
+                self.toast("Kiwins flaggor hämtas när du stoppar lyssningen")
 
         def flagg_meny(self, widget, x, y, f_hz, fl):
             """Högerklick i spektrumet: lägg till/ändra/ta bort flagga."""
@@ -7155,7 +7157,9 @@ def run_gui(args):
                 self._auto_level_pending = True
                 if isinstance(src, KiwiSource) and self.conf.get("flaggor_kiwi", True):
                     nyckel = webbmottagare.norm_url(src.addr)
-                    self.flaggor.satt_kiwi(nyckel, src.addr)
+                    self.flaggor.satt_kiwi(nyckel, src.addr, hamta=False)
+                    if not self.flaggor.har_cache(nyckel):
+                        self.flaggor.hamta(nyckel, src.addr)
                     src.vanta_flaggor = lambda: self.flaggor.vanta_pa_hamtning(nyckel)
                 else:
                     self.flaggor.satt_kiwi(None, None)
@@ -7167,8 +7171,11 @@ def run_gui(args):
             else:
                 self.scanner.stop()
                 was_kiwi = isinstance(e.source, KiwiSource)
+                src_k = e.source
                 e.stop()
                 self.audio.stop()
+                if was_kiwi and self.conf.get("flaggor_kiwi", True):
+                    self.flaggor.efter_stopp(webbmottagare.norm_url(src_k.addr), src_k.addr, src_k)
                 zb = getattr(self, "_zoom_before_kiwi", None)
                 if was_kiwi and zb is not None:
                     self._zoom_before_kiwi = None

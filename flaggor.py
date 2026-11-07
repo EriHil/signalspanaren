@@ -142,6 +142,9 @@ class Flaggor:
                        typ_for(kiwiflagga), kalla="dold", ersatter=kiwi_nyckel(kiwiflagga))
 
     # ── Kiwi ──
+    kiwi_upptagen = None      # funktion som ger True när ljudet är uppkopplat (sätts av programmet)
+    vantar_pa_stopp = None    # (nyckel, addr) för en hämtning som väntar på att lyssningen stoppas
+
     def _cachefil(self, nyckel):
         return os.path.join(self.cache_dir, nyckel.replace("/", "_").replace(":", "_") + ".json")
 
@@ -165,12 +168,43 @@ class Flaggor:
             self.hamta(nyckel, addr)
 
     def hamta(self, nyckel, addr):
+        """Hämtar Kiwins flaggor, men aldrig medan ljudet är uppkopplat. Då väntar hämtningen till stoppet."""
         if nyckel in self._hamtar:
-            return
+            return True
+        if self.kiwi_upptagen and self.kiwi_upptagen():
+            self.vantar_pa_stopp = (nyckel, addr)
+            self.status = "hämtas när lyssningen stoppas"
+            self._andrat()
+            return False
+        self.vantar_pa_stopp = None
         self._hamtar.add(nyckel)
         self.status = "hämtar Kiwins flaggor …"
         self._andrat()
         threading.Thread(target=self._hamta, args=(nyckel, addr), name="KiwiFlaggor", daemon=True).start()
+        return True
+
+    def har_cache(self, nyckel):
+        return self._alder(nyckel) is not None
+
+    def _alder(self, nyckel):
+        """Cachens ålder i sekunder, eller None om den saknas."""
+        try:
+            with open(self._cachefil(nyckel), encoding="utf-8") as fh:
+                return time.time() - float(json.load(fh).get("tid", 0))
+        except (OSError, ValueError):
+            return None
+
+    def efter_stopp(self, nyckel, addr, src):
+        """Körs när lyssningen stoppats. Hämtar flaggorna om de väntat på stoppet eller om cachen är äldre än ett dygn."""
+        def arbeta():
+            slut = time.monotonic() + 15
+            while getattr(src, "cli", None) is not None and time.monotonic() < slut:
+                time.sleep(0.1)
+            vantar = self.vantar_pa_stopp is not None and self.vantar_pa_stopp[0] == nyckel
+            alder = self._alder(nyckel)
+            if vantar or alder is None or alder > CACHE_TID:
+                self.hamta(nyckel, addr)
+        threading.Thread(target=arbeta, name="KiwiFlaggorStopp", daemon=True).start()
 
     def vanta_pa_hamtning(self, nyckel, timeout=70.0):
         """Väntar tills flagghämtningen för Kiwin är klar, så att ljudkanalen inte öppnas samtidigt."""
@@ -179,7 +213,7 @@ class Flaggor:
         while nyckel in self._hamtar and time.monotonic() < slut:
             time.sleep(0.2)
         if vantade:
-            time.sleep(5)     # KiwiSDR tar inte emot ljudet direkt efter flaggkanalen (sett i test)
+            time.sleep(1)     # KiwiSDR tar inte emot ljudet direkt efter flaggkanalen (0,5 s kopplade ner)
 
     def _hamta(self, nyckel, addr):
         import kiwisdr

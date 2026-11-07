@@ -571,15 +571,20 @@ def hamta_flaggor(addr, lo_khz=0.0, hi_khz=30000.0, steg_khz=2000.0, timeout=45.
         for c in ("SET send_dB=1", "SET zoom=0 start=0", "SET maxdb=0 mindb=-100", "SET wf_speed=1", "SET wf_comp=0"):
             ws.send(c)
 
-        def vanta(sek, pa_mkr):
+        def vanta(sek, antal):
             t_end = time.monotonic() + sek
-            while time.monotonic() < t_end:
-                m = ws.recv()
+            mkr = []
+            while time.monotonic() < t_end and len(mkr) < antal:
+                try:
+                    m = ws.recv()
+                except socket.timeout:
+                    break
                 if m[:3] != b"MSG":
                     continue
                 txt = m[4:].decode(errors="replace")
                 if txt.startswith("mkr="):
-                    return urllib.parse.unquote(txt[4:])
+                    mkr.append(urllib.parse.unquote(txt[4:]))
+                    continue
                 for kv in txt.split(" "):
                     k, _, v = kv.partition("=")
                     if k == "load_dxcfg":
@@ -591,33 +596,34 @@ def hamta_flaggor(addr, lo_khz=0.0, hi_khz=30000.0, steg_khz=2000.0, timeout=45.
                         raise KiwiError("KiwiSDR:n släpper inte in fler program just nu")
                     elif k == "badp" and v == "1":
                         raise KiwiError("KiwiSDR:n kräver lösenord")
-            return None
-        vanta(1.5, False)
+            return mkr
+        vanta(1.5, 10 ** 9)
+        fonster = []
         f = lo_khz
-        t0 = time.monotonic()
-        while f < hi_khz and time.monotonic() - t0 < timeout:
-            ws.send(f"SET MARKER db=0 min={f:.3f} max={min(hi_khz, f + steg_khz):.3f} zoom=10 width=1024 "
-                    f"eibi_types_mask=0x0 filter_tod=0 anti_clutter=0")
-            svar = vanta(4.0, True)
-            if svar:
-                try:
-                    lst = json.loads(svar)[1:]
-                except ValueError:
-                    lst = []
-                for d in lst:
-                    try:
-                        lage, tk = _dx_dekod(int(d.get("fl", 0)))
-                        key = (round(float(d["f"]), 2), d.get("i", ""))
-                        if key in sedda:
-                            continue
-                        sedda.add(key)
-                        ut.append({"f": float(d["f"]) * 1e3, "namn": str(d.get("i", ""))[:60], "lage": lage,
-                                   "typ": typer.get(tk, ""), "not": str(d.get("n", ""))[:120],
-                                   "b": int(d.get("b", 0) or 0), "e": int(d.get("e", 2400) or 2400)})
-                    except (KeyError, ValueError, TypeError):
-                        continue
-            ws.send("SET keepalive")
+        while f < hi_khz:
+            fonster.append((f, min(hi_khz, f + steg_khz)))
             f += steg_khz
+        for lo, hi in fonster:
+            ws.send(f"SET MARKER db=0 min={lo:.3f} max={hi:.3f} zoom=10 width=1024 "
+                    f"eibi_types_mask=0x0 filter_tod=0 anti_clutter=0")
+        for svar in vanta(min(timeout, 10.0), len(fonster)):
+            try:
+                lst = json.loads(svar)[1:]
+            except ValueError:
+                lst = []
+            for d in lst:
+                try:
+                    lage, tk = _dx_dekod(int(d.get("fl", 0)))
+                    key = (round(float(d["f"]), 2), d.get("i", ""))
+                    if key in sedda:
+                        continue
+                    sedda.add(key)
+                    ut.append({"f": float(d["f"]) * 1e3, "namn": str(d.get("i", ""))[:60], "lage": lage,
+                               "typ": typer.get(tk, ""), "not": str(d.get("n", ""))[:120],
+                               "b": int(d.get("b", 0) or 0), "e": int(d.get("e", 2400) or 2400)})
+                except (KeyError, ValueError, TypeError):
+                    continue
+        ws.send("SET keepalive")
     finally:
         try:
             ws.close()
