@@ -11,8 +11,9 @@ CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 STANDARD = {"aktiv": True, "backend": "gratis", "gratis_modell": "openai", "claude_modell": "", "api_key": ""}
 SYSTEM = ("Du är en assistent i programmet Signalspanaren för radioanalys. Svara på svenska och var tydlig med "
           "vad som är mätt och vad som är en gissning. Klassa aldrig en signal som säker utan tydliga belägg. "
-          "När ni är överens om vilken signal det är, avsluta svaret med en egen rad som börjar med FÖRSLAG= "
-          "följt av ett JSON-objekt på en rad med nycklarna namn, typ och not. Skriv ingen FÖRSLAG-rad annars.")
+          "När användaren och du är överens om vilken signal det är, avsluta svaret med en egen rad som börjar med FÖRSLAG= "
+          "direkt följt av ett JSON-objekt på samma rad med nycklarna namn, typ och not. Skriv ingen FÖRSLAG-rad annars. "
+          "Skriv aldrig att något har sparats. Det gör användaren med knappen.")
 
 
 def las_config(sokvag):
@@ -34,7 +35,7 @@ def spara_config(sokvag, cfg):
 
 
 def forslag_ur(text):
-    m = re.search(r"FÖRSLAG=(\{.*\})", text or "")
+    m = re.search(r"FÖRSLAG[*_\s]*=[*_\s]*(\{.*\})", text or "")
     if not m:
         return None
     try:
