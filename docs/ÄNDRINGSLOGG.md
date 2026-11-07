@@ -18,6 +18,7 @@
 - **Klassa själv:** knappen "🚩 Klassa själv …" i signalanalysen sparar din bedömning som en flagga på frekvensen. Formuläret är förifyllt med frekvens, läge och analysens gissning. Därefter visar analysen din klassning som signaltyp och sin egen gissning bredvid.
 - **Hopfällbara sektioner i sidopanelen:** klicka på en rubrik för att fälla ihop eller fälla ut den. Läget sparas.
 - **Fyra nya facit-klipp med riktigt tal:** Shannon VOLMET 5505 kHz USB, 40 m LSB (svag), samt en tysk och en finsk station på 80 m. Signalfamiljen blir rätt på 42 av 42 klipp. STANAG 4285, PSK och FT8 känns igen som förut.
+- **Signalanalysen öppnar på vald frekvens.** När du öppnar fliken Signalanalys utan analysmål analyseras den inställda kanalen direkt, i stället för att visa "Klicka på en bärvåg". Ett mål som du redan valt med klick ligger kvar.
 
 ## 2.12.0 (2026-11-07)
 

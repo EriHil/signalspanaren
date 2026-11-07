@@ -4518,6 +4518,10 @@ def run_gui(args):
                 self._follow_key = key
                 self.set_target(f, hi - lo, fit=False)
 
+        def open_on_tuned(self):
+            if self.an.tap.target is None:
+                self.follow_tuned()
+
         def listen(self):
             r = self.last
             f = (r or {}).get("f_abs") or self.an.tap.target
@@ -5473,6 +5477,7 @@ def run_gui(args):
             self.an_placeholder.set_child(bb)
             self.an_tab_label = Gtk.Label(label="Signalanalys")
             self.an_page = nb.append_page(self.an_holder, self.an_tab_label)
+            nb.connect("switch-page", self._on_bottom_page)
             return nb
 
         # ── signalanalys ──
@@ -5481,6 +5486,10 @@ def run_gui(args):
 
         def analys_shown(self):
             return self.an_win is not None or self.bottom_nb.get_current_page() == self.an_page
+
+        def _on_bottom_page(self, nb, page, num):
+            if num == self.an_page and self.an_win is None:
+                self.an_panel.open_on_tuned()
 
         def carrier_at(self, f, tol=None):
             """Detekterad bärvåg (eller tydlig topp i spektrumet) nära f. Returnerar (mitt, bandbredd) eller None."""
