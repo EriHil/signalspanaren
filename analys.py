@@ -1448,13 +1448,19 @@ class Analyzer:
         stab = sum(1 for x in hist if x == fam) / max(1, len(hist))
         snr_f = min(1.0, max(0.0, ((feat.get("snr") or 0.0) - 3.0) / 12.0))
         k = feat.get("kandidat")
-        kand_f = min(1.0, k[0] / 100.0) if k else 0.5
+        # förslagets andel av de två främsta poängen: två lika starka typer ger 50 %, inte 100 %
+        andra = max((x[0] for x in (feat.get("kandidater") or [])
+                     if not k or x[1].get("namn") != k[1].get("namn")), default=0)
+        andel = k[0] / (k[0] + andra) if k and k[0] > 0 else 0.0
+        kand_f = min(1.0, andel) if k else 0.5
         s = 0.5 * stab + 0.3 * snr_f + 0.2 * kand_f
+        if k and andel < 0.8:
+            s = min(s, 0.8)
         # starka bevis utöver familjens stabilitet: FT8/FT4-detektorn (symboltakt och tonraster stämmer),
         # ett låst förslag med hög poäng, eller en avkodare som får ut text
         if feat.get("lagbaud"):
             s = max(s, 0.85)
-        if feat.get("kandidat_las") and k and k[0] >= 80:
+        if feat.get("kandidat_las") and k and k[0] >= 80 and andel >= 0.8:
             s = max(s, 0.7)
         if feat.get("avk_varden"):
             s = max(s, 0.75)

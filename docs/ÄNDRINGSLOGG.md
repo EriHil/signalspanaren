@@ -29,6 +29,7 @@
 - **Signaltypen väljs i rullistan.** Under signaltypen finns en rullista med Automatiskt, analysens låsta typ, övriga kandidater och alla kända typer. Ett val sparas som operatörens klassning på frekvensen och finns kvar i programmet. Väljer du Automatiskt tas den bort igen. En klassning gjord med Klassa själv ändras av ett val, men tas inte bort av Automatiskt. Rutan har en fast minimihöjd och scrollar i stället för att klippa.
 - **kHz-skala i frekvensfördelningen.** Histogrammet har märken längs underkanten: 1 kHz när området är minst 2 kHz, annars 100 Hz. Då syns signalens bredd.
 - **Klartextrutan töms vid byte av signal.** När målet flyttas mer än en kanalbredd töms rutan och den köade texten, så att gamla tecken inte blandas med den nya signalen. Spara och Logga behåller texten.
+- **Fast signaltyp och ärlig säkerhet.** Analysen låser en typ när den varit tydligt bäst en stund, med minst 80 % av de två främsta poängen. Procenten är just den andelen, så två lika starka typer ger 50 %. Klassraden följer samma regel. Rutan ändras sedan bara av dig: rullistan väljer eller ändrar typ, och Redigera ändrar namn, typ och anteckning.
 
 ## 2.12.0 (2026-11-07)
 

@@ -4252,6 +4252,7 @@ def run_gui(args):
             self.last = None
             self._rid = -1
             self._kand_shown = None
+            self._kand_hist = []
             self.text_t = 0
             self.set_margin_top(6)
             self.set_margin_start(6)
@@ -4385,7 +4386,7 @@ def run_gui(args):
             self.kand.add_css_class("analys-ram")
             self.kand.set_markup("<b>Signaltyp</b>\n–")
             typbox.append(self.kand)
-            self.klassa_btn = Gtk.Button(label="🚩 Klassa själv …", halign=Gtk.Align.START)
+            self.klassa_btn = Gtk.Button(label="✎ Redigera …", halign=Gtk.Align.START)
             self.klassa_btn.set_tooltip_text("Spara din egen bedömning som en flagga på frekvensen – den visas sedan "
                                              "som signaltyp i stället för analysens gissning")
             self.klassa_btn.add_css_class("flat")
@@ -4533,6 +4534,7 @@ def run_gui(args):
             self._klar_f = f
             self._title_tap = None
             self._kand_shown = None
+            self._kand_hist.clear()
             self._show_symbols(None)
             self.fax_dec = None
             self.fax_btn.set_visible(False)
@@ -4749,11 +4751,13 @@ def run_gui(args):
         def _klassa_sjalv(self):
             r = getattr(self, "last", None) or {}
             f = r.get("f_abs") or self.win.freq
-            k = r.get("kandidat")
-            namn = (k[1].get("namn") if k and not r.get("osaker") else "") or ""
-            typ = self.FAM_TILL_TYP.get(r.get("fam"), "Data")
-            self.win.flagg_dialog(None, f, forslag={"namn": namn, "typ": typ, "lage": self.win.engine.mode,
-                                                    "not": f"analys: {r.get('klass', '')}, {r.get('occ_bw') or 0:.0f} Hz"})
+            op = self._operator_flagga(r)
+            shown = getattr(self, "_kand_shown", None)
+            namn = (op or {}).get("namn") or (shown or {}).get("namn") or ""
+            typ = ((op or {}).get("typ") or ((shown or {}).get("e") or {}).get("kat")
+                   or self.FAM_TILL_TYP.get(r.get("fam"), "Data"))
+            not_ = (op or {}).get("not") or f"analys: {r.get('klass', '')}, {r.get('occ_bw') or 0:.0f} Hz"
+            self.win.flagg_dialog(op, f, forslag={"namn": namn, "typ": typ, "lage": self.win.engine.mode, "not": not_})
 
         def _on_typ(self, dd, *_):
             if self._typ_busy:
@@ -4768,7 +4772,9 @@ def run_gui(args):
                 if op is not None and op.get("kalla") == "signaltyp":
                     fl.ta_bort(op["id"])
                 elif op is not None:
-                    self.win.toast("Klassningen är gjord med Klassa själv – ta bort den där")
+                    self.win.toast("Klassningen är gjord med ✎ Redigera – ändra den där")
+                self._kand_shown = None
+                self._kand_hist.clear()
                 return
             if not 0 < i <= len(self._typ_items):
                 return
@@ -4779,6 +4785,8 @@ def run_gui(args):
             else:
                 fl.lagg_till(r.get("f_abs") or self.win.freq, namn, lage=self.win.engine.mode, typ=typ,
                              noter="Vald i signaltypen", kalla="signaltyp")
+            self._kand_shown = {"namn": namn, "e": e or {"namn": namn, "kat": typ}, "sc": None, "kalla": "vald"}
+            self._kand_hist.clear()
 
         def _typ_visa(self, r, op, shown):
             """Rullistan för signaltypen: Automatiskt, låst typ, operatörens val, kandidater och alla kända typer."""
@@ -4827,38 +4835,46 @@ def run_gui(args):
                 self._typ_busy = False
 
         def _kand_visa(self, r, op):
-            """Signaltyp-rutan: alltid samma tre rader. Visar den låsta typen och byter bara när analysen låser en ny."""
+            """Signaltyp-rutan har en fast grund: analysen låser typen när den varit stabil en stund.
+            Sedan ändras rutan bara av dig (rullistan eller Redigera)."""
             esc = GLib.markup_escape_text
-            lock = r.get("kandidat") if r and r.get("kandidat_las") else None
             shown = getattr(self, "_kand_shown", None)
-            if lock is not None:
-                nm = lock[1].get("namn")
-                if shown is None or nm != shown["namn"]:
-                    shown = {"namn": nm, "e": lock[1], "sc": lock[0]}
-                    self._kand_shown = shown
-                elif abs(lock[0] - shown["sc"]) >= 10:
-                    shown["sc"] = lock[0]
+            if shown is None and r and r.get("fam") not in (None, "BRUS"):
+                hist = self._kand_hist
+                lock = r.get("kandidat") if r.get("kandidat_las") else None
+                hist.append((lock[1].get("namn"), lock) if lock is not None else None)
+                del hist[:-40]
+                rader = [x for x in hist if x]
+                if len(hist) >= 20 and rader:
+                    antal = {}
+                    for nm_, _l in rader:
+                        antal[nm_] = antal.get(nm_, 0) + 1
+                    nm = max(antal, key=antal.get)
+                    if antal[nm] >= 0.6 * len(hist):
+                        _n, lock_s = next(x for x in reversed(rader) if x[0] == nm)
+                        andra = max((s for s, e, _w in (r.get("kandidater") or []) if e.get("namn") != nm), default=0)
+                        andel = lock_s[0] / (lock_s[0] + andra) if lock_s[0] > 0 else 0
+                        if andel >= 0.8:
+                            shown = {"namn": nm, "e": lock_s[1], "sc": 100 * andel, "kalla": "analys"}
+                            self._kand_shown = shown
+                            hist.clear()
             if op is not None:
                 state = "din klassning"
                 nm_l = f"🚩 <b>{esc(op['namn'])}</b>"
-                info_l = f"<span size='small' alpha='75%'>{esc(op.get('typ', ''))}</span>"
+                info_l = f"<span size='small' alpha='75%'>{esc(op.get('not') or op.get('typ', ''))}</span>"
             elif shown is not None:
                 e = shown["e"]
                 kat = e.get("kat", "")
                 colr = {"militär": "#ff7a5c", "myndighet": "#ffb547"}.get(kat, "#7fe0d0")
-                state = "låst"
-                nm_l = (f"<span foreground='{colr}'>●</span> <b>{esc(shown['namn'])}</b> "
-                        f"<span alpha='70%'>{shown['sc']:.0f} % · {esc(kat)}</span>")
+                state = "vald" if shown.get("kalla") == "vald" else "analys"
+                procent = f" <span alpha='70%'>{shown['sc']:.0f} %</span>" if shown.get("sc") is not None else ""
+                nm_l = (f"<span foreground='{colr}'>●</span> <b>{esc(shown['namn'])}</b>{procent} "
+                        f"<span alpha='70%'>· {esc(kat)}</span>")
                 info_l = f"<span size='small' alpha='75%'>{esc(e.get('info', ''))}</span>"
-            elif r and r.get("osaker") and r.get("fam") not in (None, "BRUS"):
-                state = "söker"
-                nm_l = "<b>Osäker – klassa själv</b>"
-                info_l = ("<span size='small' alpha='80%'>Lyssna och använd mätvärdena – "
-                          "spara din bedömning med <i>Klassa själv</i>.</span>")
             else:
                 state = "söker"
                 nm_l = "<span alpha='60%'>–</span>"
-                info_l = "<span size='small' alpha='60%'>väntar på en stabil signaltyp</span>"
+                info_l = "<span size='small' alpha='60%'>väntar på en stabil signaltyp – eller välj i rullistan</span>"
             self.kand.set_markup(f"<b>Signaltyp</b> <span alpha='70%'>({state})</span>\n{nm_l}\n{info_l}")
             self._typ_visa(r, op, shown)
 
