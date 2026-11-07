@@ -345,6 +345,22 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   AGC attack/decay fungerar som i SDR++ (standard 50 och 5). Lägre decay ger
   mindre brus mellan orden.
 
+ DSP-filter (som Icom IC-7300)
+  Demodulator → "🎛 DSP-filter (som IC-7300)" visar en panel över den nedre
+  delen av fönstret (vattenfallet syns hela tiden). Gäller AM/SSB/CW.
+  • Filterförval FIL1/2/3 – SSB 3,0/2,4/1,8 kHz, CW 1,2/0,5/0,25, AM 9/6/3
+  • Filterform – SHARP (branta kanter) eller SOFT (mjukare, mindre ringning)
+  • PBT nedre/övre kant – flytta filterkanterna var för sig för att skära
+    bort en störning på ena sidan. Båda lika = flytta hela passbandet.
+    Ny bandbredd nollställer PBT.
+  • Brusreducering (NR) 1–15 – börja kring 4–8. För hög nivå ger
+    "undervattensljud".
+  • Auto-notch – tar bort visslande bärvågor. Manuell notch – välj
+    ljudfrekvens och bredd W/M/N.
+  • Störningsblankare (NB) – mot tändstörningar/elstängsel; ha den av annars.
+  • RX HPF/LPF och bas/diskant – forma ljudet (bas/diskant gäller bara när
+    HPF och LPF är 0).
+
  HF (kortvåg, under 28 MHz)
   Välj Direktsampling → "Q-gren" i sidopanelen (fungerar på NESDR SMArt v5 och
   RTL-SDR v3; I-grenen är mycket sämre över 9 MHz). RTL-SDR v4 klarar HF utan.

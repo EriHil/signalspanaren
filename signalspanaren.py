@@ -29,7 +29,7 @@ import atexit
 
 APP_NAME = "Signalspanaren"
 APP_ID = "se.eh.Signalspanaren"
-VERSION = "2.11.0"
+VERSION = "2.12.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "signalspanaren")
@@ -228,6 +228,7 @@ try:
     import iqfil
     import kiwisdr
     import webbmottagare
+    import dspfilter
 except ImportError as _e:  # pragma: no cover
     setup_logging()
     log.critical("Saknar Python-paket: %s. Installera med: sudo dnf install python3-numpy python3-scipy", _e)
@@ -272,6 +273,10 @@ def ssb_zone(f):
             return side, zon
     return "USB", "usb"
 
+
+# AGC-förval: (namn, decay i 1/s). IC-7300 anger tidskonstanter för SSB (FAST/MID/SLOW ≈ 0,3/2/6 s).
+AGC_PRESETS = [("SDR++ (τ 0,2 s)", 5.0), ("FAST (0,3 s)", 1 / 0.3), ("MID (2 s)", 0.5), ("SLOW (6 s)", 1 / 6),
+               ("Eget", None)]
 
 DEFAULT_STEP = {"WFM": 100000, "NFM": 12500, "AM": 5000, "USB": 100, "LSB": 100, "CW": 10}
 STEPS = [0, 10, 100, 1000, 5000, 9000, 10000, 12500, 25000, 100000]
@@ -334,6 +339,9 @@ DEFAULT_CONF = {
     "source": "rtl", "tcp_addr": "127.0.0.1:1234", "kiwi_addr": "", "webrx_own": [], "my_pos": "", "auto_gain": True, "gain": 30.0, "ppm": 0,
     "agc_attack": 50.0, "agc_decay": 5.0,
     "kiwi_auto_gain": True, "kiwi_gain": 65.0, "auto_sideband": True,
+    "dsp_shape": "SHARP", "pbt_lo": 0.0, "pbt_hi": 0.0, "nb_on": False, "nb_level": 50, "nb_depth": 8,
+    "nb_width": 20, "nr_on": False, "nr_level": 6, "anotch_on": False, "mnotch_on": False,
+    "mnotch_freq": 1000.0, "mnotch_width": "M", "tone_hpf": 0, "tone_lpf": 0, "tone_bass": 0, "tone_treble": 0,
     "direct": 0, "biast": False, "freq": 100.0e6, "mode": "WFM", "bw": None, "squelch": -150.0,
     "volume": 80, "step_idx": 0, "db_min": -100.0, "db_max": -20.0, "zoom": 1, "spec_frac": 0.35,
     "colormap": "spanare", "theme": 0, "skin": "spanare", "analys_bw_idx": 0, "analys_follow": False, "scan_mode": 0, "scan_start": "144.0", "scan_stop": "146.0",
@@ -1071,6 +1079,19 @@ class Engine:
         self.agc_decay = 5.0        # 1/s, som SDR++ (reglage 1–20)
         self.agc_g = 1.0
         self.agc_amp = None
+        # DSP-filter i IC-7300-stil (dspfilter.py)
+        self.shape = "SHARP"         # kanalfiltrets form: SHARP/SOFT
+        self.pbt_lo = 0.0            # twin PBT: flytt av nedre/övre kanten (Hz, + = uppåt i frekvens)
+        self.pbt_hi = 0.0
+        self.nb_on = False
+        self.nb = dspfilter.NoiseBlanker(SR // 4)
+        self.tone = {"hpf": 0, "lpf": 0, "bass": 0, "treble": 0}
+        self.tonec = dspfilter.ToneControl(AF)
+        self.mnotch_on = False
+        self.mnotch_freq = 1000.0
+        self.mnotch_width = "M"
+        self.mnotch = dspfilter.ManualNotch(AF)
+        self.snr_proc = dspfilter.SpectralNR(AF)
         self.source = None
         self.thread = None
         self.running = False
@@ -1216,8 +1237,11 @@ class Engine:
         return p
 
     # ── filter ──
+    def _filter_key(self, mode, bw):
+        return (mode, bw, self.shape, self.pbt_lo, self.pbt_hi)
+
     def _rebuild(self, mode, bw):
-        self._filt_key = (mode, bw)
+        self._filt_key = self._filter_key(mode, bw)
         cut1 = float(np.clip(bw / 2 + 10e3, 30e3, 150e3)) if mode == "WFM" else 60e3
         self.h1 = firwin(63, cut1, fs=SR)
         self.z1 = np.zeros(len(self.h1) - 1, np.complex128)
@@ -1231,23 +1255,11 @@ class Engine:
         else:
             self.h2 = firwin(127, 22e3, fs=FS1)
             self.z2 = np.zeros(len(self.h2) - 1, np.complex128)
-            n = np.arange(255) - 127
-            if mode in ("NFM", "AM"):
-                hc = firwin(129, min(bw / 2, 23000), fs=AF).astype(np.complex128)
-            else:
-                half = min(bw / 2, 6000)
-                if mode == "USB":
-                    fc = 200 + half
-                elif mode == "LSB":
-                    fc = -(200 + half)
-                else:
-                    fc = CW_TONE
-                hc = firwin(255, half, fs=AF) * np.exp(2j * np.pi * fc * n / AF)
-            self.hc = hc
-            self.zc = np.zeros(len(hc) - 1, np.complex128)
-            hp = {"NFM": 250, "AM": 60}.get(mode, 100)
-            self.bh, self.ah = butter(2, hp, "highpass", fs=AF)
-            self.zh = np.zeros(max(len(self.bh), len(self.ah)) - 1)
+            lo, hi = dspfilter.pbt_edges(mode, min(bw, 46000), self.pbt_lo, self.pbt_hi)
+            lo, hi = max(lo, -23000.0), min(hi, 23000.0)
+            self.cfir = dspfilter.FftFir(dspfilter.channel_taps(
+                lo, hi, AF, self.shape, CW_TONE if mode == "CW" else 0.0))
+            self._default_hp = {"NFM": 250, "AM": 60}.get(mode, 100)
             self._last = 0j
         self.agc_g = 1.0
         self.agc_amp = None
@@ -1300,6 +1312,9 @@ class Engine:
         return a * gs
 
     def _chan_bounds(self, mode, bw, off):
+        if mode != "WFM" and mode == self.mode and bw == self.bw and (self.pbt_lo or self.pbt_hi):
+            lo, hi = dspfilter.pbt_edges(mode, bw, self.pbt_lo, self.pbt_hi)
+            return off + lo, off + hi
         if mode == "USB":
             return off + 200, off + 200 + bw
         if mode == "LSB":
@@ -1479,7 +1494,7 @@ class Engine:
             self.detector.update(10 * np.log10(avg + 1e-20), c, now)
 
         # Demodulering
-        if self._filt_key != (mode, bw):
+        if self._filt_key != self._filter_key(mode, bw):
             self._rebuild(mode, bw)
         n = np.arange(BLOCK)
         w = -2 * np.pi * off / SR
@@ -1487,6 +1502,8 @@ class Engine:
         self._ph = (self._ph + w * BLOCK) % (2 * np.pi)
         y, self.z1 = lfilter(self.h1, 1.0, y, zi=self.z1)
         y = y[::D1]
+        if self.nb_on and mode != "WFM":
+            y = self.nb.process(y)                  # pulsblankare på bredbandig IQ (384 kHz)
         if mode == "WFM":
             prev = np.concatenate(([self._last], y[:-1]))
             self._last = y[-1]
@@ -1502,19 +1519,25 @@ class Engine:
                 wb = 2 * np.pi * CW_TONE / AF
                 y = y * np.exp(1j * (self._ph_bfo + wb * m))
                 self._ph_bfo = (self._ph_bfo + wb * len(y)) % (2 * np.pi)
-            y, self.zc = lfilter(self.hc, 1.0, y, zi=self.zc)
+            y = self.cfir.process(y)
             if mode == "NFM":
                 prev = np.concatenate(([self._last], y[:-1]))
                 self._last = y[-1]
                 a = np.angle(y * np.conj(prev)) * (0.6 / (2 * np.pi * 5000 / AF))
-                a, self.zh = lfilter(self.bh, self.ah, a, zi=self.zh)
-                self._activity(a)
             elif mode == "AM":
-                a, self.zh = lfilter(self.bh, self.ah, np.abs(y), zi=self.zh)
-                self._activity(a)
-                a = self._agc(a)
+                a = np.abs(y)
             else:
-                a, self.zh = lfilter(self.bh, self.ah, y.real, zi=self.zh)
+                a = y.real
+            t = self.tone
+            self.tonec.configure(t["hpf"], t["lpf"], t["bass"], t["treble"], self._default_hp)
+            a = self.tonec.process(a)
+            if mode in ("NFM", "AM"):
+                self._activity(a)
+            if self.mnotch_on:
+                self.mnotch.configure(self.mnotch_freq, self.mnotch_width)
+                a = self.mnotch.process(a)
+            a = self.snr_proc.process(a)            # brusreducering / auto-notch (gör inget när de är av)
+            if mode != "NFM":
                 a = self._agc(a)
         if not self.sq_open:
             a = a * 0.0
@@ -4661,6 +4684,9 @@ def run_gui(args):
             e.bw = conf["bw"] or DEFAULT_BW[e.mode]
             e.squelch = conf["squelch"]
             e.volume = conf["volume"] / 100
+            self._apply_dsp_conf()
+            if conf.get("dsp_open"):
+                GLib.idle_add(lambda: self._open_dsp() and False)
             e.agc_attack = float(conf.get("agc_attack", 50.0))
             e.agc_decay = float(conf.get("agc_decay", 5.0))
             e.auto_rec = conf["auto_rec"]
@@ -4723,7 +4749,10 @@ def run_gui(args):
             ctrls.append(_btn("▶", "Flytta spektrumet åt höger", lambda: self.pan_spectrum(1)))
             overlay.add_overlay(ctrls)
             right.set_start_child(overlay)
-            right.set_end_child(self._build_bottom())
+            # DSP-panelen svävar ovanpå den nedre delen (flikarna) – aldrig över spektrum/vattenfall
+            self.bottom_overlay = Gtk.Overlay()
+            self.bottom_overlay.set_child(self._build_bottom())
+            right.set_end_child(self.bottom_overlay)
             right.set_resize_end_child(False)     # panelen behåller sin höjd när fönstret ändras
             right.set_shrink_end_child(False)
             right.set_shrink_start_child(False)
@@ -4743,6 +4772,7 @@ def run_gui(args):
                 else:
                     right.set_position(int(mx * (0.55 if mx < 700 else 0.6)))
             right.connect("notify::max-position", _restore_bottom)
+            self.dsp_panel = None
             outer.set_end_child(right)
             self.toasts.set_child(outer)
             tv.set_content(self.toasts)
@@ -4969,11 +4999,17 @@ def run_gui(args):
             self._spin(g, "AGC attack", 1, 200, 1, c.get("agc_attack", 50.0), 0,
                        lambda v: self._set_agc("agc_attack", v),
                        "AM/SSB/CW. Hur snabbt ljudet dras ned (SDR++: 50)")
-            self._spin(g, "AGC decay", 1, 20, 0.5, c.get("agc_decay", 5.0), 1,
+            self.agc_preset_row = self._combo(
+                g, "AGC-förval", [n for n, _ in AGC_PRESETS], self._agc_preset_idx(c.get("agc_decay", 5.0)),
+                self._on_agc_preset)
+            self.agc_decay_row = self._spin(g, "AGC decay", 0.1, 20, 0.1, c.get("agc_decay", 5.0), 2,
                        lambda v: self._set_agc("agc_decay", v),
                        "Hur snabbt ljudet återhämtar sig – lägre = mindre brus mellan orden (SDR++: 5)")
             self.step_row = self._combo(g, "Frekvenssteg", STEP_NAMES, c["step_idx"],
                                         lambda i: self._set_conf("step_idx", i))
+            self._button(g, "🎛 DSP-filter (som IC-7300)", self._open_dsp).set_tooltip_text(
+                "Visar/döljer en panel till höger om vattenfallet med filterform, PBT, brusreducering, notch, "
+                "störningsblankare och tonkontroll – går att använda medan du lyssnar")
             self._switch(g, "Automatiskt sidband", c.get("auto_sideband", True),
                          lambda v: self._set_conf("auto_sideband", v)).set_tooltip_text(
                 "I USB/LSB: byt till LSB på 160/80/40 m (tal) och USB annars (30 m och uppåt, 60 m, FT8/data, "
@@ -5453,6 +5489,15 @@ def run_gui(args):
             self._update_freq_label()
             self.view.queue_draw()
 
+        def _check_sideband(self):
+            """Vid start: byt till brukligt sidband om det sparade läget är fel här (om inte handvalt)."""
+            e = self.engine
+            if e.mode in ("USB", "LSB") and self.conf.get("auto_sideband", True) \
+                    and getattr(self, "_ssb_manual_zone", None) is None:
+                side, _z = ssb_zone(self.freq)
+                if side != e.mode:
+                    self.tune(self.freq)                     # tune() byter sidband och visar en notis
+
         def _refit_kiwi(self):
             """Nytt läge/ny bandbredd med KiwiSDR: stäm om Kiwin om kanalen hamnat utanför dess band."""
             e = self.engine
@@ -5492,6 +5537,9 @@ def run_gui(args):
                 if mode in ("USB", "LSB"):                   # användaren valde sidband själv
                     side, zon = ssb_zone(self.freq)
                     self._ssb_manual_zone = zon if mode != side else None
+                    if mode != side:
+                        self.toast(f"Obs: på {self.freq / 1e6:.3f} MHz används normalt {side} – "
+                                   f"fel sidband låter som obegripligt tal")
                 self._refit_kiwi()                           # frontpanel, skannerförval m.fl.
             self.view.queue_draw()
 
@@ -5560,6 +5608,8 @@ def run_gui(args):
                 return
             self.engine.bw = float(v)
             self.conf["bw"] = float(v)
+            if self.conf.get("pbt_lo") or self.conf.get("pbt_hi"):
+                self._pbt_reset()                            # som IC-7300: ny bredd nollställer PBT
             self._refit_kiwi()
             self.view.queue_draw()
 
@@ -5570,6 +5620,157 @@ def run_gui(args):
         def _set_agc(self, k, v):
             self.conf[k] = float(v)
             setattr(self.engine, k, float(v))
+            if k == "agc_decay" and hasattr(self, "agc_preset_row") and not getattr(self, "_agc_loading", False):
+                self._agc_loading = True
+                self.agc_preset_row.set_selected(self._agc_preset_idx(v))
+                self._agc_loading = False
+
+        @staticmethod
+        def _agc_preset_idx(decay):
+            for i, (_n, d) in enumerate(AGC_PRESETS):
+                if d is not None and abs(d - float(decay)) < 0.01:
+                    return i
+            return len(AGC_PRESETS) - 1
+
+        def _on_agc_preset(self, i):
+            d = AGC_PRESETS[i][1]
+            if d is None or getattr(self, "_agc_loading", False):
+                return
+            self._agc_loading = True
+            self.agc_decay_row.set_value(round(d, 2))
+            self._agc_loading = False
+
+        # ── DSP-filter i IC-7300-stil (dspfilter.py) ──
+        def _apply_dsp_conf(self):
+            """Kopierar DSP-inställningarna från conf till motorn."""
+            c, e = self.conf, self.engine
+            e.shape = c.get("dsp_shape", "SHARP")
+            e.pbt_lo, e.pbt_hi = float(c.get("pbt_lo", 0.0)), float(c.get("pbt_hi", 0.0))
+            e.nb_on = bool(c.get("nb_on"))
+            e.nb.level, e.nb.depth, e.nb.width = int(c.get("nb_level", 50)), int(c.get("nb_depth", 8)), int(c.get("nb_width", 20))
+            e.snr_proc.nr = bool(c.get("nr_on"))
+            e.snr_proc.nr_level = int(c.get("nr_level", 6))
+            e.snr_proc.notch = bool(c.get("anotch_on"))
+            e.mnotch_on = bool(c.get("mnotch_on"))
+            e.mnotch_freq = float(c.get("mnotch_freq", 1000.0))
+            e.mnotch_width = c.get("mnotch_width", "M")
+            e.tone = {"hpf": int(c.get("tone_hpf", 0)), "lpf": int(c.get("tone_lpf", 0)),
+                      "bass": int(c.get("tone_bass", 0)), "treble": int(c.get("tone_treble", 0))}
+
+        def _dsp_set(self, k, v):
+            self.conf[k] = v
+            self._apply_dsp_conf()
+            if k in ("pbt_lo", "pbt_hi"):
+                self._refit_kiwi()
+            self.view.queue_draw()
+
+        def _pbt_reset(self, *_):
+            for r in (getattr(self, "pbt_lo_row", None), getattr(self, "pbt_hi_row", None)):
+                if r is not None:
+                    r.set_value(0)
+            self.conf["pbt_lo"] = self.conf["pbt_hi"] = 0.0
+            self._apply_dsp_conf()
+
+        def _on_fil(self, i):
+            if getattr(self, "_fil_loading", False):
+                return
+            lst = dspfilter.FIL_PRESETS.get(self.engine.mode)
+            if lst:
+                self.bw_row.set_value(lst[i])            # → _on_bw (nollställer PBT, som IC-7300)
+
+        def _open_dsp(self, *_):
+            """Visar/döljer DSP-panelen. Den svävar ovanpå den nedre delen av fönstret (till höger över
+            flikarna), så spektrum och vattenfall syns hela tiden, och allt annat går att använda samtidigt."""
+            p = self.dsp_panel
+            if p is None:
+                outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                head = Gtk.Box(spacing=6)
+                for m in ("top", "start", "end"):
+                    getattr(head, f"set_margin_{m}")(8)
+                head.append(Gtk.Label(label="<b>DSP-filter (som IC-7300)</b>", use_markup=True, xalign=0, hexpand=True))
+                close = Gtk.Button(icon_name="window-close-symbolic", tooltip_text="Dölj DSP-panelen")
+                close.add_css_class("flat")
+                close.connect("clicked", lambda *_: self._open_dsp())
+                head.append(close)
+                outer.append(head)
+                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+                for m in ("top", "bottom", "start", "end"):
+                    getattr(box, f"set_margin_{m}")(10)
+                self._build_dsp_rows(box, self.conf)
+                sc = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+                sc.set_child(box)
+                outer.append(sc)
+                outer.set_size_request(390, -1)
+                outer.set_halign(Gtk.Align.END)
+                outer.set_valign(Gtk.Align.FILL)
+                outer.set_margin_end(10)
+                outer.set_margin_top(6)
+                outer.set_margin_bottom(6)
+                outer.add_css_class("card")
+                outer.add_css_class("dsp-panel")
+                self.dsp_panel = p = outer
+                self.bottom_overlay.add_overlay(p)
+                p.set_visible(False)
+            show = not p.get_visible()
+            p.set_visible(show)
+            if show:
+                self._sync_fil_row()
+            self.conf["dsp_open"] = show
+
+        def _sync_fil_row(self):
+            """Visa vilket FIL-förval som motsvarar nuvarande bandbredd (om något)."""
+            r = getattr(self, "fil_row", None)
+            lst = dspfilter.FIL_PRESETS.get(self.engine.mode)
+            if r is None or not lst:
+                return
+            self._fil_loading = True
+            i = min(range(3), key=lambda k: abs(lst[k] - float(self.engine.bw)))
+            r.set_selected(i)
+            self._fil_loading = False
+
+        def _build_dsp_rows(self, box, c):
+            g = self._section(None, "Digitala mottagningsfilter för AM/SSB/CW i stil med Icom IC-7300.")
+            self.fil_row = self._combo(g, "Filterförval", ["FIL1 – bred", "FIL2 – mellan", "FIL3 – smal"], 0, self._on_fil)
+            self.fil_row.set_tooltip_text("SSB 3,0/2,4/1,8 kHz, CW 1,2/0,5/0,25 kHz, AM 9/6/3 kHz (som IC-7300)")
+            shapes = list(dspfilter.SHAPES)
+            self._combo(g, "Filterform", ["SHARP – branta kanter", "SOFT – mjukare ljud"],
+                        shapes.index(c.get("dsp_shape", "SHARP")) if c.get("dsp_shape") in shapes else 0,
+                        lambda i: self._dsp_set("dsp_shape", shapes[i]))
+            self.pbt_lo_row = self._spin(g, "PBT nedre kant (Hz)", -1500, 1500, 50, c.get("pbt_lo", 0.0), 0,
+                                         lambda v: self._dsp_set("pbt_lo", float(v)),
+                                         "Flyttar filtrets nedre kant – skär bort störningar under signalen")
+            self.pbt_hi_row = self._spin(g, "PBT övre kant (Hz)", -1500, 1500, 50, c.get("pbt_hi", 0.0), 0,
+                                         lambda v: self._dsp_set("pbt_hi", float(v)),
+                                         "Flyttar filtrets övre kant. Båda lika = flytta hela passbandet")
+            self._button(g, "Nollställ PBT", self._pbt_reset)
+            self._switch(g, "Brusreducering (NR)", c.get("nr_on", False), lambda v: self._dsp_set("nr_on", v))
+            self._spin(g, "NR-nivå", 1, 15, 1, c.get("nr_level", 6), 0, lambda v: self._dsp_set("nr_level", int(v)),
+                       "Högre = mer dämpning av bruset (men risk för ”undervattensljud”)")
+            self._switch(g, "Auto-notch (AN)", c.get("anotch_on", False), lambda v: self._dsp_set("anotch_on", v),
+                         "Tar bort stillastående toner (bärvågor, visslingar)")
+            self._switch(g, "Manuell notch (MN)", c.get("mnotch_on", False), lambda v: self._dsp_set("mnotch_on", v))
+            self._spin(g, "Notch-frekvens (Hz, i ljudet)", 50, 5000, 10, c.get("mnotch_freq", 1000.0), 0,
+                       lambda v: self._dsp_set("mnotch_freq", float(v)))
+            widths = list(dspfilter.NOTCH_WIDTHS)
+            self._combo(g, "Notch-bredd", ["W – bred", "M – mellan", "N – smal"],
+                        widths.index(c.get("mnotch_width", "M")) if c.get("mnotch_width") in widths else 1,
+                        lambda i: self._dsp_set("mnotch_width", widths[i]))
+            self._switch(g, "Störningsblankare (NB)", c.get("nb_on", False), lambda v: self._dsp_set("nb_on", v),
+                         "Mot pulsstörningar (tändning, elstängsel). Ha den av annars")
+            self._spin(g, "NB-nivå", 1, 100, 1, c.get("nb_level", 50), 0, lambda v: self._dsp_set("nb_level", int(v)),
+                       "Högre = blankar svagare pulser")
+            self._spin(g, "NB-djup", 1, 10, 1, c.get("nb_depth", 8), 0, lambda v: self._dsp_set("nb_depth", int(v)),
+                       "Hur mycket pulsen dämpas (10 = helt)")
+            self._spin(g, "NB-bredd", 1, 100, 1, c.get("nb_width", 20), 0, lambda v: self._dsp_set("nb_width", int(v)),
+                       "Blankningstid, 10 µs per steg")
+            self._spin(g, "RX HPF (Hz)", 0, 2000, 100, c.get("tone_hpf", 0), 0, lambda v: self._dsp_set("tone_hpf", int(v)),
+                       "0 = av. När HPF/LPF används nollas bas/diskant (som IC-7300)")
+            self._spin(g, "RX LPF (Hz)", 0, 5000, 100, c.get("tone_lpf", 0), 0, lambda v: self._dsp_set("tone_lpf", int(v)),
+                       "0 = av")
+            self._spin(g, "RX bas", -5, 5, 1, c.get("tone_bass", 0), 0, lambda v: self._dsp_set("tone_bass", int(v)),
+                       "2 dB per steg")
+            self._spin(g, "RX diskant", -5, 5, 1, c.get("tone_treble", 0), 0, lambda v: self._dsp_set("tone_treble", int(v)))
+            box.append(g)
 
         def _on_volume(self, v):
             self.engine.volume = v / 100
@@ -6142,6 +6343,7 @@ def run_gui(args):
                 self.audio.start()
                 self._auto_level_pending = True
                 e.start(src)
+                self._check_sideband()                       # sparat läge kan vara fel sidband här
                 btn.set_label("■ Stoppa")
                 btn.remove_css_class("suggested-action")
                 btn.add_css_class("destructive-action")
@@ -7317,6 +7519,8 @@ def run_gui(args):
                                  "color: #7fe0d0; } .map-label { background: rgba(0,0,0,0.65); color: white; "
                                  "border-radius: 4px; padding: 0 3px; font-size: 8pt; font-weight: bold; } "
                                  ".wf-controls { background: rgba(0,0,0,0.55); border-radius: 6px; padding: 2px; } "
+                                 ".dsp-panel { background-color: @window_bg_color; "
+                                 "box-shadow: 0 2px 10px rgba(0,0,0,0.5); } "
                                  ".wf-controls button { min-width: 28px; min-height: 22px; padding: 0 4px; "
                                  "font-size: 11pt; } "
                                  "paned.delare > separator { min-width: 6px; min-height: 6px; "
