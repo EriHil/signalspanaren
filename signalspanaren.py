@@ -29,7 +29,7 @@ import atexit
 
 APP_NAME = "Signalspanaren"
 APP_ID = "se.eh.Signalspanaren"
-VERSION = "2.10.0"
+VERSION = "2.10.1"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "signalspanaren")
@@ -4859,7 +4859,8 @@ def run_gui(args):
                                            "Lista: www.receiverbook.de/map eller rx.kiwisdr.com\n"
                                            "Lösenord (om Kiwin kräver det): lösen@värd:port\n"
                                            "Kiwin ger ca 12 kHz I/Q i taget, 0–30 MHz.")
-            self.kiwi_row.connect("apply", lambda r: self._set_conf("kiwi_addr", r.get_text().strip()))
+            self.kiwi_row.connect("apply", lambda r: (self._set_conf("kiwi_addr", r.get_text().strip()),
+                                                      self._refresh_ppm_row()))
             g.add(self.kiwi_row)
             self._button(g, "🌐 Webbmottagare på nätet …", self._open_webrx).set_tooltip_text(
                 "KiwiSDR, OpenWebRX och WebSDR runt om i världen")
@@ -5344,12 +5345,16 @@ def run_gui(args):
                     d = freq - e.center
                 ok_offset = True
             if kiwi:
-                # Kiwin skickar bara ca 12 kHz runt mitten: flytta mitten (Kiwin stämmer om) när
-                # signalen inte längre får plats i bandet
-                ok_offset = abs(d) + e.bw / 2 <= e.source.narrow_rate * 0.42
+                # Kiwin skickar bara ca 12 kHz runt mitten (utanför ±0,415 × takten fyller vi på med
+                # brus): flytta mitten (Kiwin stämmer om) när kanalen inte längre ryms. USB/LSB ligger
+                # helt på ena sidan om den inställda frekvensen, så räkna med kanalens verkliga kanter
+                # och lägg kanalens mitt (inte bärvågen) i Kiwins mitt.
+                lo, hi = e._chan_bounds(e.mode, e.bw, d)
+                ok_offset = max(abs(lo), abs(hi)) <= e.source.narrow_rate * 0.40
                 if not ok_offset:
-                    e.set_center(freq)
-                    d = 0.0
+                    mid = (lo + hi) / 2 - d                  # kanalens mitt relativt den inställda frekvensen
+                    e.set_center(freq + mid)
+                    d = -mid
                     ok_offset = True
             if not (ok_offset or keep_center):
                 newc = freq + SR * 0.15
@@ -5362,6 +5367,12 @@ def run_gui(args):
             self._update_freq_label()
             self.view.queue_draw()
 
+        def _refit_kiwi(self):
+            """Nytt läge/ny bandbredd med KiwiSDR: stäm om Kiwin om kanalen hamnat utanför dess band."""
+            e = self.engine
+            if e.running and isinstance(e.source, KiwiSource):
+                self.tune(self.freq)
+
         def remote_tune(self, f, m):
             GLib.idle_add(lambda: self.tune(f, m) or False)
 
@@ -5370,9 +5381,11 @@ def run_gui(args):
             e.set_center(c)
             c = e.center                                     # oförändrad vid uppspelning
             d = self.freq - c
-            if e.running and isinstance(e.source, KiwiSource) and abs(d) > e.source.narrow_rate * 0.45:
-                self.freq = c
-                d = 0.0
+            if e.running and isinstance(e.source, KiwiSource):
+                lo, hi = e._chan_bounds(e.mode, e.bw, d)
+                if max(abs(lo), abs(hi)) > e.source.narrow_rate * 0.45:
+                    d = d - (lo + hi) / 2                    # kanalen hamnar mitt i Kiwins band
+                    self.freq = c + d
             if abs(d) > SR * 0.45:
                 self.freq = c + math.copysign(SR * 0.45, d)
                 d = self.freq - c
@@ -5450,12 +5463,14 @@ def run_gui(args):
             if self._updating:
                 return
             self.set_mode(MODES[dd.get_selected()])
+            self._refit_kiwi()
 
         def _on_bw(self, v):
             if self._updating:
                 return
             self.engine.bw = float(v)
             self.conf["bw"] = float(v)
+            self._refit_kiwi()
             self.view.queue_draw()
 
         def _on_squelch(self, v):
@@ -5479,8 +5494,9 @@ def run_gui(args):
             self.tcp_row.set_visible(src == "tcp")
             self.kiwi_row.set_visible(src == "kiwi")
             for i, r in enumerate(self.hw_rows):
-                # KiwiSDR: bara förstärkningen (Kiwins AGC eller fast) går att styra
-                r.set_visible(src != "file" and (src != "kiwi" or i < 2))
+                # KiwiSDR: förstärkningen (Kiwins AGC eller fast) och frekvenskorrigeringen (per Kiwi)
+                r.set_visible(src != "file" and (src != "kiwi" or i < 4))
+            self._refresh_ppm_row()
 
         # ── uppspelning av IQ-fil ──
         def _playing(self):
@@ -5665,15 +5681,67 @@ def run_gui(args):
             if not self.conf["auto_gain"]:
                 self._src_set("gain", v)
 
+        def _ppm_kiwi_key(self):
+            """Nyckel för Kiwins egen frekvenskorrigering (None när källan inte är en KiwiSDR)."""
+            if self.conf.get("source") != "kiwi" or not self.conf.get("kiwi_addr", "").strip():
+                return None
+            return webbmottagare.norm_url(self.conf["kiwi_addr"])
+
+        def _cur_ppm(self):
+            k = self._ppm_kiwi_key()
+            if k:
+                return float(self.conf.get("kiwi_ppm", {}).get(k, 0.0))
+            return float(self.conf["ppm"])
+
+        def _refresh_ppm_row(self):
+            """Visa RTL-dongelns ppm (heltal) eller den valda Kiwins (en decimal)."""
+            if not hasattr(self, "ppm_row"):
+                return
+            kiwi = self._ppm_kiwi_key() is not None
+            self._ppm_loading = True
+            self.ppm_row.set_digits(1 if kiwi else 0)
+            self.ppm_row.get_adjustment().set_step_increment(0.1 if kiwi else 1)
+            self.ppm_row.set_subtitle("sparas för den här KiwiSDR:n" if kiwi else "")
+            self.ppm_row.set_value(self._cur_ppm())
+            self._ppm_loading = False
+
         def _on_ppm(self, v):
-            self.conf["ppm"] = int(v)
-            self._src_set("ppm", int(v))
+            if getattr(self, "_ppm_loading", False):
+                return
+            k = self._ppm_kiwi_key()
+            if k:
+                v = round(float(v), 1)
+                d = dict(self.conf.get("kiwi_ppm") or {})
+                if v:
+                    d[k] = v
+                else:
+                    d.pop(k, None)
+                self.conf["kiwi_ppm"] = d
+                src = self.engine.source
+                if self.engine.running and isinstance(src, KiwiSource) \
+                        and webbmottagare.norm_url(src.addr) == k:
+                    src.set("ppm", v)
+                return
+            self.conf["ppm"] = int(round(v))
+            if not isinstance(self.engine.source, KiwiSource):
+                self._src_set("ppm", int(round(v)))
 
         # ── frekvenskalibrering ──
         def _calib_measure(self, true_hz):
             """Mäter var en bärvåg på true_hz faktiskt hamnar och räknar ut korrigeringen.
             Returnerar dict, "range" (utanför fönstret) eller None (ingen data än)."""
             e = self.engine
+            src = e.source
+            if e.running and isinstance(src, KiwiSource):
+                r = src.fine_carrier(true_hz - src.center)
+                if r is None:
+                    if abs(true_hz - src.center) > src.narrow_rate * 0.42:
+                        return "range"
+                    return None
+                meas = src.center + r[0]
+                apparent_ppm = (meas - true_hz) / true_hz * 1e6
+                return {"snr": r[1], "offset": meas - true_hz, "apparent_ppm": apparent_ppm,
+                        "suggested": self._cur_ppm() - apparent_ppm}
             avg, c, cnt = e.get_avg()
             if avg is None or c is None or cnt < 4:
                 return None
@@ -5698,7 +5766,7 @@ def run_gui(args):
             meas = c + (kp + d - N / 2) * BIN_HZ
             apparent_ppm = (meas - true_hz) / true_hz * 1e6
             return {"snr": snr, "offset": meas - true_hz, "apparent_ppm": apparent_ppm,
-                    "suggested": self.conf["ppm"] - apparent_ppm}
+                    "suggested": self._cur_ppm() - apparent_ppm}
 
         def _open_calibration(self):
             from collections import deque as _dq
@@ -5713,7 +5781,8 @@ def run_gui(args):
             info = Gtk.Label(wrap=True, xalign=0)
             info.set_markup("Ställ in mottagaren på en <b>känd, stabil bärvåg</b> – t.ex. en tidssignal "
                             "(RWM 4,996/9,996/14,996 MHz via direktsampling), en fyrsändare, en repeater "
-                            "eller en mellanvågssändare. Skriv den exakta frekvensen och tryck Mät.")
+                            "eller en mellanvågssändare. Skriv den exakta frekvensen och tryck Mät.\n"
+                            "Med en KiwiSDR som källa sparas korrigeringen för just den Kiwin.")
             box.append(info)
             g = Adw.PreferencesGroup()
             fr = Adw.EntryRow(title="Känd frekvens (MHz)")
@@ -5773,11 +5842,15 @@ def run_gui(args):
                                      + ("" if r["snr"] >= 15 else "  (svag – sikta på minst 15 dB)"))
                 state["hist"].append(r["apparent_ppm"])
                 med_app = float(np.median(state["hist"]))
-                sug = self.conf["ppm"] - med_app
+                sug = self._cur_ppm() - med_app
                 off_hz = med_app * state["true"] / 1e6
-                off_row.set_subtitle(f"{off_hz:+.0f} Hz  ({med_app:+.1f} ppm)  – {len(state['hist'])} mätningar")
-                sug_row.set_subtitle(f"{round(sug):+d} ppm")
-                state["suggested"] = int(round(sug))
+                off_row.set_subtitle(f"{off_hz:+.1f} Hz  ({med_app:+.2f} ppm)  – {len(state['hist'])} mätningar")
+                if self._ppm_kiwi_key():
+                    state["suggested"] = round(sug, 1)
+                    sug_row.set_subtitle(f"{state['suggested']:+.1f} ppm (för den här KiwiSDR:n)")
+                else:
+                    state["suggested"] = int(round(sug))
+                    sug_row.set_subtitle(f"{state['suggested']:+d} ppm")
                 apply_btn.set_sensitive(r["snr"] >= 10 and len(state["hist"]) >= 3)
                 return True
 
@@ -5809,8 +5882,10 @@ def run_gui(args):
                     return
                 v = max(-200, min(200, state["suggested"]))
                 self.ppm_row.set_value(v)       # uppdaterar conf + source via _on_ppm
-                log.info("Frekvenskalibrering: ppm satt till %+d (mot %.4f MHz)", v, state["true"] / 1e6)
-                self.toast(f"Frekvenskorrigering satt till {v:+d} ppm")
+                vt = f"{v:+.1f}" if self._ppm_kiwi_key() else f"{int(v):+d}"
+                log.info("Frekvenskalibrering: ppm satt till %s (mot %.4f MHz, %s)", vt, state["true"] / 1e6,
+                         self._ppm_kiwi_key() or "RTL-SDR")
+                self.toast(f"Frekvenskorrigering satt till {vt} ppm")
                 state["hist"].clear()           # mät om för att bekräfta ~0
 
             meas_btn.connect("toggled", on_meas)
@@ -5893,8 +5968,8 @@ def run_gui(args):
                     return
                 src.set("freq", e.center)
                 src.set("gain", None if self.conf["auto_gain"] else self.conf["gain"])
-                if self.conf["ppm"]:
-                    src.set("ppm", self.conf["ppm"])
+                if self._cur_ppm() if isinstance(src, KiwiSource) else self.conf["ppm"]:
+                    src.set("ppm", self._cur_ppm() if isinstance(src, KiwiSource) else self.conf["ppm"])
                 if self.conf["direct"]:
                     src.set("direct", self.conf["direct"])
                 if self.conf["biast"]:
@@ -6486,6 +6561,7 @@ def run_gui(args):
             if running:
                 self.btn_start.set_active(False)
             self.source_row.set_selected(SOURCES.index("kiwi"))
+            self._refresh_ppm_row()                          # varje Kiwi har sin egen korrigering
             if self.freq > kiwisdr.KIWI_MAX_HZ or self.freq < 10e3:
                 self.tune(7.074e6, "USB")
             log.info("Webbmottagare vald: %s (%s)", r["namn"], url)
@@ -6730,6 +6806,7 @@ def run_gui(args):
             self._updating = True
             self.bw_row.set_value(e.bw)
             self._updating = False
+            self._refit_kiwi()
             self.view.queue_draw()
             self.toast(f"Bandbredd: {fmt_bw(e.bw)}")
 

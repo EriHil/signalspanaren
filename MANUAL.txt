@@ -330,6 +330,11 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   direktsampling. Din NESDR SMArt v5 har en TCXO och behöver i praktiken
   ingen korrigering (uppmätt fel under ca 2 ppm) – kalibreringen är främst
   för finjustering vid HF/SSB eller om du byter dongel.
+  KiwiSDR: många Kiwis går några ppm fel (SK3JR visar t.ex. ca 50 Hz för
+  lågt på 7–10 MHz, vilket hörs på SSB-röster). Med KiwiSDR som källa mäter
+  kalibreringen med Kiwins smalbandsdata (bråkdelar av en Hz) och sparar
+  korrigeringen för just den Kiwin (en decimal). RTL-dongelns ppm påverkas
+  inte. Mät mot RWM 9,996 MHz.
 
  HF (kortvåg, under 28 MHz)
   Välj Direktsampling → "Q-gren" i sidopanelen (fungerar på NESDR SMArt v5 och

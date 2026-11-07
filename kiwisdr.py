@@ -32,6 +32,7 @@ import time
 import urllib.parse
 from collections import deque
 
+import math
 import numpy as np
 
 import iqfil
@@ -185,6 +186,7 @@ class KiwiClient:
         self.running = False
         self.freq = 10e6
         self.passband = None
+        self.ppm = 0.0               # Kiwins frekvensfel: signaler syns ppm × 1e-6 × f för lågt
         self.agc = True
         self.man_gain = 50
         self.dropped = 0
@@ -320,7 +322,9 @@ class KiwiClient:
         half = int((self.nominal or 12000) * 0.5 * 0.98)
         lo, hi = self.passband or (-half, half)
         if self.ws:
-            self.ws.send(f"SET mod=iq low_cut={lo} high_cut={hi} freq={self.freq / 1e3:.3f}")
+            # en Kiwi som visar signalerna för lågt (positivt ppm) ska be om en lite lägre frekvens
+            fk = self.freq * (1 - self.ppm * 1e-6) / 1e3
+            self.ws.send(f"SET mod=iq low_cut={lo} high_cut={hi} freq={fk:.4f}")
             with self.cv:                          # det som ligger i kön hör till förra frekvensen
                 self.q.clear()
                 self.qlen = 0
@@ -407,6 +411,8 @@ class KiwiSource:
         p = self._take()
         c = KiwiClient(self.addr, self.ident)
         c.freq = self.center
+        if "ppm" in p:
+            c.ppm = float(p["ppm"])
         if "gain" in p:
             c.agc = p["gain"] is None
             if p["gain"] is not None:
@@ -430,14 +436,23 @@ class KiwiSource:
         self._buf_center = self.center
         self._nvar = None
         self._nest = deque(maxlen=64)
+        self._recent = deque(maxlen=max(4, int(4.0 * c.nominal / self.chunk_in) + 1))   # ca 4 s smal IQ
+        self._rlock = threading.Lock()
 
     def _apply(self, p):
         c = self.cli
         if "gain" in p:
             c.set_gain(p["gain"])
             self._nest.clear()
+        if "ppm" in p:
+            c.ppm = float(p["ppm"] or 0.0)
+            if "freq" not in p:
+                c.set_freq(c.freq)
         if "freq" in p:
             c.set_freq(p["freq"])
+        if "freq" in p or "ppm" in p:
+            with self._rlock:
+                self._recent.clear()
 
     def _noise_est(self, x):
         """Kiwins brusgolv (varians per insample) ur 20:e percentilen av spektret – medianen dras
@@ -469,6 +484,8 @@ class KiwiSource:
             self._apply(p)
         while len(self._buf) < self.block:
             x = self.cli.read_iq(self.chunk_in)
+            with self._rlock:
+                self._recent.append(x)
             v = self._noise_est(x)                     # följer brusgolvet (Kiwins AGC ändrar det)
             if v:
                 self._nest.append(v)
@@ -478,6 +495,34 @@ class KiwiSource:
         self._buf = self._buf[self.block:]
         out = out + self._outband(len(out))
         return out.astype(np.complex64), self.center, None
+
+    def fine_carrier(self, rel_hz, win=400.0):
+        """Mäter en bärvåg nära rel_hz (Hz från mittfrekvensen) i de senaste ca 4 s av Kiwins smala
+        IQ – bråkdelar av en Hz i upplösning, mot 375 Hz per bin i det breda spektret.
+        Returnerar (uppmätt rel. frekvens, SNR i dB) eller None om data saknas."""
+        if self.cli is None or getattr(self, "_rlock", None) is None:
+            return None
+        with self._rlock:
+            parts = list(self._recent)
+        rate = float(self.cli.rate or self.narrow_rate)
+        x = np.concatenate(parts) if parts else np.zeros(0, np.complex64)
+        if len(x) < rate * 1.5:
+            return None
+        n = len(x)
+        P = np.abs(np.fft.fftshift(np.fft.fft(x * np.hanning(n)))) ** 2
+        f = (np.arange(n) - n // 2) * rate / n
+        sel = np.nonzero(np.abs(f - rel_hz) <= win)[0]
+        if len(sel) < 3:
+            return None
+        k = int(sel[np.argmax(P[sel])])
+        d = 0.0
+        if 0 < k < n - 1:
+            a, b, c = (math.log(P[k + i] + 1e-30) for i in (-1, 0, 1))
+            den = a - 2 * b + c
+            if den:
+                d = max(-1.0, min(1.0, 0.5 * (a - c) / den))
+        floor = float(np.median(P[np.abs(f) < rate * 0.4]))
+        return f[k] + d * rate / n, 10 * math.log10(P[k] / (floor + 1e-30) + 1e-30)
 
     def close(self):
         if self.cli:

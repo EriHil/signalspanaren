@@ -1,5 +1,10 @@
 # Ändringslogg
 
+## 2.10.1 (2026-11-07)
+
+- **USB/LSB via KiwiSDR låter rätt igen.** Programmet räknade som om kanalen låg symmetriskt runt den inställda frekvensen, men USB och LSB ligger helt på ena sidan. Därför stämdes Kiwin inte om när en SSB-station låg 3–4 kHz från Kiwins mitt. En del av talet hamnade då utanför Kiwins ca 12 kHz breda band och byttes mot brus, så talet blev dovt och brusigt. Nu räknar programmet med kanalens verkliga kanter och lägger kanalens mitt i Kiwins mitt. Kontrollen görs också vid byte av läge eller bandbredd.
+- **Frekvenskorrigering per KiwiSDR.** Med KiwiSDR som källa visas Frekvenskorrigering och Kalibrera frekvens. Värdet sparas per Kiwi med en decimal. Kalibreringen mäter med Kiwins smala IQ med upplösning under 1 Hz. Exempel: SK3JR låg −56 Hz fel på RWM 9,996 MHz och hamnade på −0,4 Hz med +5,6 ppm.
+
 ## 2.10.0 (2026-11-06)
 
 - **Flygradar kan hämta flygplan från adsb.lol på internet**, utan dongel. Välj "adsb.lol (internet, ingen dongel)" i listan, eller starta med `flygradar --kalla adsblol`. Den hämtar flygplan inom 250 nautiska mil från kartans mitt var 5:e sekund. Det visar flygplan som andra matar in till adsb.lol, inte det din dongel hör. Mittpunkten skickas till adsb.lol vid varje anrop. Flygplansdata: adsb.lol (ODbL).
