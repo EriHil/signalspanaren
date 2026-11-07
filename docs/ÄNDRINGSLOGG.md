@@ -8,8 +8,11 @@
   - När majoriteten av användarna över tid är överens om en klassning, införs den i signaldatabasen automatiskt.
   - Gränser för antal användare och tid bestäms när det byggs.
   - Öppna frågor: om ändringarna granskas innan de införs, och vilken tjänst som tar emot klassningarna.
-- [ ] **Låst signaltyp.** Procenten visas som den var när typen låstes och uppdateras inte. Avgör om den ska följa analysen.
+- [ ] **Låst signaltyp: beslut.** Procenten visas som den var när typen låstes och uppdateras inte. Ska den i stället följa analysen? Inget beslut ännu.
 - [ ] **AI-chatten.** Verifiera analystexten (histogram och envelop) på en riktig signal. Testat bara med syntetisk data.
+- [ ] **Claude-läget.** Testas med användarens egen API-nyckel och modell-ID. Modell-ID är tomt som standard.
+- [ ] **AI-sök efter tjänst eller signaltyp.** Be AI:n hitta till exempel VOLMET eller STANAG 4285. Sorteringen följer KiwiSDR-flaggornas typer. Frekvenserna verifieras med analysen, flaggorna är bara en lista. Träffen visas i vattenfallet och spelas upp. Modulationer, till exempel FSK, kan inte vara sökmål.
+- [ ] **AI-chatten: kortare svar.** Gratis-AI:n skriver långa svar och ibland påhittade detaljer. Prompten behöver skärpas.
 
 ## 2.12.1 (2026-11-07, ej släppt)
 
