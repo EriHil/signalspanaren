@@ -1,6 +1,6 @@
 # Ändringslogg
 
-## 2.12.1 (2026-11-07)
+## 2.12.1 (2026-11-07, ej släppt)
 
 - **Rättat: krasch i signalanalysens spektrum** (`KeyError: 'f_lo'`). Vissa klassningar satte signalens bredd utan kantfrekvenser, bland annat linjära modem som STANAG 4539 och FT8/FT4-detektorn. Ritningen förutsatte att kanterna fanns och kraschade vid varje omritning. Nu sätts kanterna alltid, och ritningen räknar ut dem från mitt och bredd om de ändå saknas. Upptäckt på Shannon VOLMET 5505 kHz, där analysen ibland gissade STANAG 4539.
 - **Tal klassas inte längre som modem eller FM.** På VOLMET blev vart fjärde analyssteg "Digital linjär" och föreslog STANAG 4539. Talets grundton (5,7 ms ≈ 175 Hz) och sökningens nedre gräns (20 ms) togs för en modemram, och sökningen godtog ett "maximum" som bara var gränsen. Nu krävs en verklig topp. Tal med stavelsevariation (minst 1,5 dB) klassas inte som LIN, varken direkt eller via ramminnet. Svagt SSB-tal i brus blev ofta "FM", men FM kräver nu konstant envelope (stavelsevariation under 2 dB). En bandbredd där bruset dominerar (SNR under 0 dB) blir "brus" i stället för FM.
@@ -54,6 +54,18 @@
 
 - **Flygradar kan hämta flygplan från adsb.lol på internet**, utan dongel. Välj "adsb.lol (internet, ingen dongel)" i listan, eller starta med `flygradar --kalla adsblol`. Den hämtar flygplan inom 250 nautiska mil från kartans mitt var 5:e sekund. Det visar flygplan som andra matar in till adsb.lol, inte det din dongel hör. Mittpunkten skickas till adsb.lol vid varje anrop. Flygplansdata: adsb.lol (ODbL).
 - Vid fel väntar Flygradar allt längre mellan försöken, högst 60 s, och visar felet en gång.
+- **Flygradar ansluter automatiskt** till adsb.lol när ingen RTL-SDR-dongel finns. Pågående mottagning i Signalspanaren stoppas inte.
+
+Analysförbättringarna nedan ingick i 2.10.0 på grenen analys-fortsattning. De ingick inte i taggen v2.10.0.
+
+- **Bandbredd som 99 % av effekten.** Analysen mäter bredden som 99 % av effekten inom signalen, så att starka signalers kjolar inte räknas med. Det görs inte när en bärvåg bär effekten.
+- **FT8/FT4 och smal BPSK.** FT8/FT4-detektorn sorterar frekvenserna i ordning, kräver sammanhängande toner och rättar falsklarmet FT4 på FSK 50/200. Signaler som bärs av en ensam bärvåg, till exempel CW och PSK31, avvisas. Smal BPSK känns igen på en undertryckt bärvåg och en symboltaktslinje.
+- **PSK31/PSK63-avkodare.** Avkodar med ITU/G3PLX-varicode direkt i signalanalysen och i fliken Avkodat.
+- **2D-ramraster** bredvid konstellationen när ramperioden hittas, som i SigDigger. Synkordet och pilotsymbolerna syns som lodräta ränder.
+- **ADC-varning.** Programmet varnar när den 8-bitars ADC:n i RTL-SDR eller rtl_tcp klipper (värdena 0 och 255).
+- **AM-rundradio.** Bandbredden tillåter formantsvackor upp till 900 Hz kring bärvågen, så att tal inte kapas vid 2,5–3 kHz.
+- **RTTY och svag STANAG 4285.** Baudot-RTTY med 1,5 stoppbit halverar inte längre symboltiden. Svag STANAG 4285 känns igen på breda platåer och en ramperiod på minst 20 ms, även vid lägre SNR.
+- **Snabbkalibrering av PPM.** Närmaste jämna kHz från analysen eller inställningen, samt RWM 4,996, 9,996 och 14,996 MHz.
 
 ## 2.9.3 (2026-11-06)
 
