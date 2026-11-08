@@ -1002,24 +1002,27 @@ def _sim_cw_band(fs, sek=40.0):
     import cwgenerator as G
     rng = np.random.default_rng(22)
     S = G.Station
-    # QSO där två stationer turas om (−1200 Hz och 25 Hz bredvid, olika styrka och takt)
-    qa = S("", wpm=20, nyckel="bug", qsb=0.5, off_hz=-1200, niva_db=-3)
-    qb = S("", wpm=16, nyckel="rak", off_hz=-1175, niva_db=-10, fd=2, rice=2.0)
+    # Stationerna ligger minst 3 kHz isär (som på ett riktigt band), utom de avsiktliga paren.
+    # QSO där två stationer turas om (−3 kHz och 25 Hz bredvid, olika styrka och takt)
+    qa = S("", wpm=20, nyckel="bug", qsb=0.5, off_hz=-3000, niva_db=-3)
+    qb = S("", wpm=16, nyckel="rak", off_hz=-2975, niva_db=-10, fd=2, rice=2.0)
     G.planera_turer([qa, qb], G.qso_turer(rng), rng=rng)
     band = G.Band([
-        S(G.grupper(rng, 30), wpm=24, fd=5, rice=1.0, namn="FAV22-lik"),                    # 0 Hz
-        qa, qb,
-        S(G.qso(rng), wpm=22, off_hz=-600, niva_db=-2),                                    # överlappande par:
-        S(G.bulletin(rng), wpm=18, off_hz=-560, niva_db=-8),                               # 40 Hz isär
-        S(G.fyr(rng), wpm=15, off_hz=600, niva_db=-6),
-        S(G.qso(rng), wpm=14, nyckel="rak", chirp_hz=10, off_hz=-2400, niva_db=-6),
-        S(G.klartext(rng), wpm=20, farnsworth=10, off_hz=1100, niva_db=-4),
-        S(G.cq(rng), wpm=18, off_hz=2300, niva_db=-20),
-        S(G.contest(rng), wpm=32, off_hz=1600, niva_db=6),
-        S(G.contest(rng), wpm=28, off_hz=1780, niva_db=2),
-    ], snr_db=30, qrn=0.5)
+        S(G.grupper(rng, 30), wpm=24, fd=5, rice=1.0, namn="FAV22-lik"),                    # 0
+        qa, qb,                                                                            # −3 kHz
+        S(G.fyr(rng), wpm=15, off_hz=3000, niva_db=-6),                                    # +3 kHz
+        S(G.qso(rng), wpm=22, off_hz=-6000, niva_db=-2),                                   # överlappande
+        S(G.bulletin(rng), wpm=18, off_hz=-5960, niva_db=-8),                              # par, 40 Hz isär
+        S(G.klartext(rng), wpm=20, farnsworth=10, off_hz=6000, niva_db=-4),                # +6 kHz
+        S(G.qso(rng), wpm=14, nyckel="rak", chirp_hz=10, off_hz=-9000, niva_db=-6),        # −9 kHz
+        S(G.contest(rng), wpm=32, off_hz=9000, niva_db=6),                                 # contest-par,
+        S(G.contest(rng), wpm=28, off_hz=9180, niva_db=2),                                 # 180 Hz isär
+        S(G.cq(rng), wpm=18, off_hz=12000, niva_db=-20),                                   # svag, +12 kHz
+    ], snr_db=90)
+    # nästan inget eget brus och inget åskknaster: simulatorns brus är golvet. Annars syns
+    # generatorns 48 kHz breda brusmatta som en bred signal och analysen tar bandet för AM.
     z, _ = G.generera(band, fs, sek, seed=22)
-    z /= np.sqrt(np.mean(np.abs(z) ** 2)) + 1e-12
+    z /= float(np.percentile(np.abs(z), 99)) + 1e-12      # starkaste stationen ≈ 1
     return z.astype(np.complex64)
 
 

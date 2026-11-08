@@ -281,14 +281,14 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   CW-band på 99,45 MHz (från CW-generatorn, för att öva Morse-avkodaren):
     99,4500 MHz  FAV22-lik: träningsgrupper, 24 ord/min, fladder (välj gärna
                  avkodaren "Morse – träningsgrupper (5 tecken)")
-    99,4488 MHz  QSO där två stationer turas om (bug 20 ord/min + rak nyckel
+    99,4470 MHz  QSO där två stationer turas om (bug 20 ord/min + rak nyckel
                  16 ord/min, 25 Hz isär och 7 dB svagare)
-    99,4494 MHz  två stationer som sänder samtidigt 40 Hz isär (QSO + bulletin)
-    99,4506 MHz  fyr (VVV DE …/B)
-    99,4476 MHz  rak nyckel med chirp, 14 ord/min
-    99,4511 MHz  Farnsworth 20/10
-    99,4516/99,4518 MHz  två starka contest-stationer tätt intill varandra
-    99,4523 MHz  svag CQ-station (20 dB under)
+    99,4530 MHz  fyr (VVV DE …/B)
+    99,4440 MHz  två stationer som sänder samtidigt 40 Hz isär (QSO + bulletin)
+    99,4560 MHz  Farnsworth 20/10
+    99,4410 MHz  rak nyckel med chirp, 14 ord/min
+    99,4590/99,4592 MHz  två starka contest-stationer 180 Hz isär
+    99,4620 MHz  svag CQ-station (20 dB under)
 
  Utseende
   Visning → Utseende: "Spanare" (mörk marin med bärnstensfärgade detaljer och
