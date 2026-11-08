@@ -1544,7 +1544,8 @@ class CwAvkodare(Avkodare):
     namn = "Morse (CW)"
     RATE = 500.0       # Hz, upplösning för nyckelläget
     RA = 2000.0        # Hz, mellansteg för bärvågsspårning och smalt filter
-    SOK_HZ = 400.0     # bärvågen söks inom ±400 Hz från mitten
+    SOK_HZ = 400.0     # bärvågen söks inom ±400 Hz från mitten …
+    SOK_NARA = 120.0   # … eller ±120 Hz från signalens mitt när analysen har mätt den
     MIN_EL = 0.012     # s; kortare toner är störningar (en prick i 100 ord/min)
     GATE = 2.6         # tonnivå/brusnivå som krävs; rent brus ger ~2,2 efter det smala filtret
 
@@ -1557,6 +1558,7 @@ class CwAvkodare(Avkodare):
         self._dec = 0                              # fas i sista decimeringen
         self.psd = None
         self.f0 = 0.0
+        self.f_hint = None           # signalens mitt enligt analysen (Hz från målet)
         self.ph = 0.0
         self.lvl_hi = None
         self.lvl_lo = None
@@ -1605,7 +1607,10 @@ class CwAvkodare(Avkodare):
             P = np.interp(np.linspace(-ra / 2, ra / 2, 512, endpoint=False), np.fft.fftshift(f), np.fft.fftshift(P))
             self.psd = P if self.psd is None else 0.8 * self.psd + 0.2 * P
             ff = np.linspace(-ra / 2, ra / 2, 512, endpoint=False)
-            inom = np.abs(ff) <= min(self.SOK_HZ, ra / 2 * 0.8)
+            if self.f_hint is not None:          # analysen har hittat signalen: sök bara nära den,
+                inom = np.abs(ff - self.f_hint) <= self.SOK_NARA     # så att en granne inte tar över
+            else:
+                inom = np.abs(ff) <= min(self.SOK_HZ, ra / 2 * 0.8)
             Pi = self.psd[inom]
             j = int(np.argmax(Pi))
             if Pi[j] > 6 * np.median(Pi):        # tydlig topp: följ den
@@ -1690,6 +1695,11 @@ class CwAvkodare(Avkodare):
     def feed(self, z, fs, feat):
         if len(z) == 0:
             return ""
+        fm = feat.get("f_mid") if feat else None
+        if fm is not None and feat.get("fam") == "OOK":
+            self.f_hint = float(fm)
+            if self.psd is None:
+                self.f0 = self.f_hint
         e = self._envelope(z, fs)
         if len(e) == 0:
             return ""
