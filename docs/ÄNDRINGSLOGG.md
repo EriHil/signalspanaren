@@ -93,6 +93,8 @@
 - **MSK känns igen** (VLF-stationer som DHO38, NAA och JXN). När signalen kvadreras ger MSK två jämnstarka spektrallinjer symmetriskt kring mitten, vid ±halva symboltakten (±100 Hz vid 200 Bd). Analysen tog dem förut för BPSK/QPSK. Linjeavståndet ska vara lika med den separat uppmätta symboltakten, och det skiljer MSK från vanlig FSK (RTTY 50 Bd ger 900 Hz). Upptäckt med det nya facitbiblioteket.
 - **Större facitbibliotek** (pågår, nytt verktyg `bibliotek.py`). Kandidater tas ur KiwiSDR:ns stationsflaggor och spelas in 20 s åt gången. Klipp utan synlig signal sållas bort. Resten granskas mot bilder av spektrum och vattenfall innan de blir facit, och osäkra klipp läggs i `osakra/`. Hittills har 10 nya klipp tillkommit (VLF-MSK, DCF77, DWD RTTY, PBB FSK, RWM).
 
+- **Bandbredd på VLF/LF och för modem.** På VLF lutar brusgolvet cirka 10 dB över fönstret, och då slogs grannstationer ihop (JXN 16,4 kHz: 8,2 kHz). Under 500 kHz tas lutningen nu bort innan bandbredden mäts, och JXN känns igen som MSK. Ett starkt, platt och fyllt band på 1,5–4 kHz (ett modem) gäller före en smal bit inuti det (STANAG FUG 10186 kHz: 680 Hz → 3,4 kHz). Smala signaler under 200 Hz, som CW och bärvågar, behåller sin bredd. Facitbiblioteket med 55 riktiga klipp: familj rätt i 52, bandbredd rätt i 42 av 53, rätt typ visas i 91 % av stegen.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:
