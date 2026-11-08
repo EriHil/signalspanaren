@@ -82,6 +82,14 @@
 
   Talets formanter och talpauser mäts ofta smalare än talet, och då gäller kanalen. Det gäller också när inget syns. Rubriken visar "(flaggans kanal)" eller "(uppmätt)". Provat med alla facitklipp som flaggklick: bredden blir rätt i 31 av 34 (ett vanligt klick ger 26 av 34), och typen blir rätt i 97 %. Live på Shannon VOLMET (Heby) gäller flaggans kanal, och analysen visar SSB 100 %.
 
+- **Fler svaga signaltyper känns igen.** Mätt med 6 dB extra brus på facitklippen visas rätt typ i 78 % av stegen (förra steget 49 %, från början 25 %), och "brus" bara i 7 % (52 % från början). Rena klipp: 99 %. Ändringar:
+  - **AM med sidbanden i bruset:** en bärvåg vars nivå varierar räknas som modulerad, inte som omodulerad. Bandbredden används inte mot AM när bärvågen bär nästan all effekt, eftersom mätningen då bara ser bärvågen.
+  - **Svaga modem (STANAG 4285):** den utslätade bandbreddsmätningen har hysteres och tappar inte bandet när det fädar. Modemramen (106,7 ms) söks över 3 s, och samma period i minst två steg ger starkt stöd för ett modem med en bärvåg. Att bandbreddsmätningen hittat signalen räknas som bevis mot brus.
+  - **Svag RTTY:** FSK-parsökningen godtar svagare toner om de turas om i tiden, som FSK gör. Två CW-stationer bredvid varandra gör inte det och tas inte längre för ett FSK-par.
+  - **Svag CW:** en smal topp precis under tröskeln letas i alla upplösningar, med något lägre krav nära klicket.
+  - **Osäker gissning i stället för "Analyserar …":** efter ungefär 4 s visas analysens bästa gissning, märkt som osäker, även när ingen typ leder tydligt.
+  - Kvar: CW 7083, RWM och PSK31 vid +6 dB ligger 1–4 dB över bruset och visas som brus. Två svaga SSB-klipp gissas som FSK (märkt osäkert).
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

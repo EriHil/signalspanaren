@@ -167,7 +167,7 @@ def _bredd_straff(h, w):
     return 0.0
 
 
-def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None):
+def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None, sedd=False):
     """{hypotes: {term: poäng}} för ett analyssteg. bredd = kanalens uppmätta bredd (stabil, över 2 s)."""
     B = {h: {} for h in HYP}
 
@@ -189,14 +189,22 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None):
         ge(["BRUS"], "signal i bruset", -min(3.0, narv - 1.0))
     elif snr < 1:
         ge(["BRUS"], "lågt SNR", 1.0)
+    if sedd:
+        # bandbreddsmätningen hittade signalen över 2 s (statistiskt säkert, även när varje steg är brusigt)
+        ge(["BRUS"], "syns i spektrum", -2.0)
     elif snr > 8:
         ge(["BRUS"], "tydlig signal", -2.0)
     # 2. bandbredd: den stabila om den finns, annars stegets
     w = bredd or feat.get("occ_bw") or 0.0
+    cf0 = feat.get("barvag_andel") or 0.0
+    # en bärvåg vars nivå varierar (närvaro) är modulerad: när sidbanden drunknar i bruset syns bara
+    # bärvågen, och den uppmätta bredden säger då inget om AM
+    modbarvag = cf0 >= 0.5 and narv is not None and narv >= 1.5 and not feat.get("skurar")
     if feat.get("occ_bw") and (feat.get("skurar") or raw in ("OOK", "BÄRVÅG")):
         w = min(w, feat["occ_bw"])          # nyckelklick gör kanalens uppmätta bredd för stor
     for h in HYP:
-        if h != "BRUS":
+        # när bärvågen bär nästan all effekt ser bandbreddsmätningen bara den (sidbanden i bruset)
+        if h != "BRUS" and not (cf0 >= 0.5 and h == "AM"):
             v = _bredd_straff(h, w)
             if v:
                 ge([h], "bandbredd", 0.6 * v)
@@ -215,7 +223,10 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None):
         ge(["OOK"], "på/av", 0.8)
         ge(["AM", "FM", "BÄRVÅG"], "på/av", -0.5)
     # 4. bärvåg
-    cf = feat.get("barvag_andel") or 0.0
+    cf = cf0
+    if modbarvag:
+        ge(["BÄRVÅG"], "bärvågen varierar", -1.5)
+        ge(["AM"], "bärvågen varierar", 0.8)
     if cf >= 0.4 and w >= 3000 and not feat.get("skurar"):
         ge(["AM"], "bärvåg med sidband", 1.5 if (feat.get("spegel") or 0) >= 0.45 else 1.0)
         ge(DIGITAL | {"SSB"}, "stark bärvåg", -0.8)
@@ -230,6 +241,11 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None):
         ge(DIGITAL | {"BÄRVÅG"}, "talrytm", -1.5 * t)
         if w > 600:
             ge(["OOK"], "talrytm", -1.5 * t)
+    # 5b. modemram över 3 s (samma period i minst två steg): ett modem med en bärvåg (STANAG 4285 m.fl.)
+    if feat.get("ram3"):
+        txt = f"ram {feat['ram3']:.1f} ms"
+        ge(["LIN", "PSK8", "QPSK", "BPSK"], txt, 1.5)
+        ge(["BRUS", "SSB", "AM", "FM", "OOK", "BÄRVÅG"], txt, -1.0)
     # 6. FT8/FT4: bara i delbanden
     for nm in ("FT8", "FT4"):
         if not ft_tillaten(nm, f_abs):
@@ -267,7 +283,7 @@ class Bevismotor:
                 P[h][txt] = P[h].get(txt, 0.0) + v
         return P
 
-    def steg(self, feat, f_abs, now, bredd=None, tal=None, ft=None, kontext=(), narv=None):
+    def steg(self, feat, f_abs, now, bredd=None, tal=None, ft=None, kontext=(), narv=None, sedd=False):
         if self.t is not None:
             k = math.exp(-max(0.0, now - self.t) / self.TAU)
             for h in HYP:
@@ -275,7 +291,7 @@ class Bevismotor:
                     self.A[h][term] *= k
         self.t = now
         self.n += 1
-        for h, termer in steg_bevis(feat, f_abs, bredd, tal, ft, narv).items():
+        for h, termer in steg_bevis(feat, f_abs, bredd, tal, ft, narv, sedd).items():
             for term, v in termer.items():
                 self.A[h][term] = self.A[h].get(term, 0.0) + self.SKALA * v
         P = self.prior(f_abs, kontext)
@@ -287,8 +303,8 @@ class Bevismotor:
         bast = max(p, key=p.get)
         # visningen: byt först när en annan typ lett tydligt i BYT_TID s
         if self.visad is None:
-            if p[bast] >= 0.6 or (self.n >= 12 and p[bast] >= 0.35):
-                self.visad = bast
+            if p[bast] >= 0.6 or (self.n >= 12 and p[bast] >= 0.35) or self.n >= 12:
+                self.visad = bast           # efter ~4 s visas bästa gissningen (som osäker under 55 %)
         elif bast != self.visad and p[self.visad] < 0.2 and p[bast] >= 0.6:
             self.visad, self.utmanare = bast, None        # den visade är uppenbart fel – vänta inte
         elif bast != self.visad and p[bast] - p[self.visad] >= self.BYT_MARG:

@@ -301,6 +301,15 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0):
         r2 = _fit_res(z, fs, survey_bw, near_hz, fin)
         if r2 is not None and r2[1] >= 2.5 * fs / fin:
             r = r2
+    # svag smal signal (CW, nycklad bärvåg) precis under tröskeln: alla upplösningar däremellan, med något
+    # lägre krav på toppen nära klicket (få punkter att söka i – liten risk för falsklarm i brus)
+    if r is None:
+        mel = grov
+        while mel <= fin and r is None:
+            r2 = _fit_res(z, fs, survey_bw, near_hz, mel, slapp=True)
+            if r2 is not None and r2[1] >= 2.5 * fs / mel and r2[1] < 600.0:
+                r = r2
+            mel *= 2
     # svag bred signal (tal, modem, AM-sidband nära bruset): syns bara när spektrumet slätas ut
     rs = _fit_slat(z, fs, survey_bw, near_hz, None if r is None else r[0])
     if rs is not None and rs[4] < 4.0 and rs[5] < 6.0:
@@ -346,7 +355,9 @@ def _fit_slat(z, fs, survey_bw, near_hz, kring=None, slat_hz=300.0):
     k0 = max(0, c - r) + int(np.argmax(Pd[max(0, c - r):c + r + 1]))
     if Pd[k0] < thr:
         return None
-    above = Pd > thr
+    # hysteres: starta vid tröskeln, väx så länge bandet ligger tydligt över bruset (ett svagt modem
+    # doppar tillfälligt under tröskeln när kanalen fädar)
+    above = Pd > floor + max(0.3, 1.5 * sigma)
     gap = max(2, int(round(200.0 / res)))
 
     def edge(step):
@@ -378,7 +389,7 @@ def _fit_slat(z, fs, survey_bw, near_hz, kring=None, slat_hz=300.0):
     return (lo + hi) / 2, hi - lo, kant, spegel, over, over_kring
 
 
-def _fsk_par(z, fs, survey_bw, max_shift=1200.0):
+def _fsk_par(z, fs, survey_bw, max_shift=1200.0, vaxling=False):
     """Två toner på var sin sida om mitten (klick mellan FSK-tonerna). Returnerar (mitt, bredd, False)
     eller None. Tonerna ska vara högst 15 dB olika starka och 100–max_shift Hz isär."""
     nfft = int(np.clip(_pow2(fs / 10.0), 256, 16384))
@@ -386,10 +397,12 @@ def _fsk_par(z, fs, survey_bw, max_shift=1200.0):
         nfft //= 2
     f, P = _welch(np.asarray(z, np.complex64), fs, nfft)
     sel = np.abs(f) <= min(survey_bw / 2, max_shift)
-    f, Pd = f[sel], 10 * np.log10(P[sel] + 1e-30)
+    # lätt utslätning (≈ 30 Hz): en svag FSK-ton (50 Bd) är bredare än en punkt, och bruset sprider mindre
+    Ps = uniform_filter1d(P, 3, mode="nearest")
+    f, Pd = f[sel], 10 * np.log10(Ps[sel] + 1e-30)
     if len(f) < 16:
         return None
-    floor = float(np.percentile(10 * np.log10(P + 1e-30), 20))
+    floor = float(np.percentile(10 * np.log10(Ps + 1e-30), 20))
     vl, hl = f < -20, f > 20
     if not vl.any() or not hl.any():
         return None
@@ -397,17 +410,43 @@ def _fsk_par(z, fs, survey_bw, max_shift=1200.0):
     kh = np.flatnonzero(hl)[np.argmax(Pd[hl])]
     a, b = float(Pd[kl]), float(Pd[kh])
     sep = float(f[kh] - f[kl])
-    if min(a, b) < floor + 10 or abs(a - b) > 15 or not (100.0 <= sep <= max_shift):
+    if min(a, b) < floor + 6 or abs(a - b) > 15 or not (100.0 <= sep <= max_shift):
         return None
-    # mellan tonerna ska det vara en svacka (annars är det en bred signal, inte två toner)
+    if (vaxling or min(a, b) < floor + 10) and not _vaxlar(z, fs, nfft, float(f[kl]), float(f[kh])):
+        return None         # svaga toner: bara ett FSK-par om de turas om (två CW-stationer gör det inte)
+    # mellan tonerna ska det vara en svacka (annars är det en bred signal, inte två toner): minst 10 dB, eller
+    # för svaga toner minst 60 % av vägen ned till bruset
     mellan = Pd[kl + 1:kh]
-    if len(mellan) and float(np.median(mellan)) > min(a, b) - 10:
+    djup = min(10.0, 0.6 * (min(a, b) - floor))
+    if len(mellan) and float(np.median(mellan)) > min(a, b) - djup:
         return None
     mid = float(f[kl] + f[kh]) / 2
     return mid, sep + 150.0, False
 
 
-def _fit_res(z, fs, survey_bw, near_hz, nfft):
+def _vaxlar(z, fs, nfft, f1, f2):
+    """Turas tonerna f1 och f2 om? FSK sänder den ena eller den andra – deras nivåer över tid är negativt
+    korrelerade. Två oberoende signaler (t.ex. CW-stationer bredvid varandra) är det inte."""
+    z = np.asarray(z, np.complex64)
+    n = max(64, nfft // 4)                          # korta rutor: följer symbolerna (RTTY 20 ms)
+    n = min(n, int(fs * 0.02)) if fs * 0.02 >= 64 else n
+    m = len(z) // n
+    if m < 20:
+        return False
+    w = np.hanning(n).astype(np.float32)
+    X = np.fft.fft(z[:m * n].reshape(m, n) * w, axis=1)
+    fr = np.fft.fftfreq(n, 1 / fs)
+    k1, k2 = int(np.argmin(np.abs(fr - f1))), int(np.argmin(np.abs(fr - f2)))
+    if k1 == k2:
+        return False
+    p1 = 10 * np.log10(np.abs(X[:, k1]) ** 2 + 1e-20)
+    p2 = 10 * np.log10(np.abs(X[:, k2]) ** 2 + 1e-20)
+    if p1.std() < 1e-6 or p2.std() < 1e-6:
+        return False
+    return float(np.corrcoef(p1, p2)[0, 1]) < -0.2
+
+
+def _fit_res(z, fs, survey_bw, near_hz, nfft, slapp=False):
     N = len(z)
     f, P = _welch(z, fs, nfft)
     sel = np.abs(f) <= survey_bw / 2
@@ -428,8 +467,10 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
     c = len(f) // 2
     r = max(1, int(near_hz / res))
     k0 = max(0, c - r) + int(np.argmax(Pd[max(0, c - r):c + r + 1]))
-    if Pd[k0] < thr + 1.5:
+    if Pd[k0] < (floor + max(3.0, 3.5 * sigma) + 0.3 if slapp else thr + 1.5):
         return None
+    if slapp:
+        thr = floor + max(2.0, 2.5 * sigma)    # kanterna för en svag topp mäts mot en lägre nivå
     above = Pd > thr
     gap = max(2, int(round(max(250.0, survey_bw * 0.02) / res)))   # t.ex. hålet kring en AM-bärvåg
     # Tydlig smal bärvåg vid k0 (AM): talets hål i sidbanden kan vara flera hundra Hz, så luckorna får
@@ -460,7 +501,7 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
         return last
 
     a, b = edge(-1), edge(1)
-    if Pd[k0] < thr + 3 and b - a < 16:
+    if not slapp and Pd[k0] < thr + 3 and b - a < 16:
         return None
     # för smal överblick: signalen når kanten eller fyller nästan hela fönstret
     kant = a <= gap or b >= len(f) - 1 - gap or (b - a + 1) > 0.75 * len(f)
@@ -1457,6 +1498,7 @@ class Analyzer:
         self.ny_motor = True
         self.kontext = None                    # f_abs -> [(hypotes, poäng, förklaring)], t.ex. flaggor
         self._tal = None
+        self._ram3 = deque(maxlen=5)           # modemram över 3 s per steg (None = ingen)
 
     FAM_FONSTER = 5
     FAM_BYT = 3
@@ -1623,7 +1665,9 @@ class Analyzer:
         if r is None or r[1] < 150.0:
             # klick mellan FSK-tonerna (shift upp till ca 1,2 kHz): bandbreddsmätningen delar vid svackan
             # mellan tonerna och ser ingen signal vid klicket – eller hittar bara den ena tonen (svag RTTY)
-            rp = _fsk_par(z, fs, ft["survey"])
+            # när en smal signal redan hittats måste tonerna turas om – annars är det en CW-station och
+            # dess granne, inte ett FSK-par
+            rp = _fsk_par(z, fs, ft["survey"], vaxling=r is not None)
             if rp is not None and (r is None or abs(abs(r[0] - rp[0]) - (rp[1] - 150.0) / 2) < 60.0):
                 r = rp
         if ft.get("flagga"):
@@ -1701,6 +1745,8 @@ class Analyzer:
         if hasattr(self, "motor"):
             self.motor.nollstall()
         self._tal = None
+        if hasattr(self, "_ram3"):
+            self._ram3.clear()
         self._ram_hist.clear()
         self._fsk_mem = None
 
@@ -1873,6 +1919,7 @@ class Analyzer:
             ft["_motor"] = True                # första steget på den färdiga kanalen: börja om
             self.motor.nollstall()
             self._tal = None
+            self._ram3.clear()
         snap = self.tap.snapshot(3.0)
         narv = None
         if snap is not None and len(snap[0]) >= snap[1] * 2.0:
@@ -1880,6 +1927,19 @@ class Analyzer:
             if m is not None:
                 self._tal = m if self._tal is None else 0.6 * self._tal + 0.4 * m
             narv = bevis.narvaro(snap[0], snap[1], self.tap.bw)
+            # modemram över 3 s (STANAG 4285: 106,7 ms) – syns i brus där ett steg på 0,4 s inte räcker.
+            # Bara ≥ 50 ms: talets grundton ger skenbara perioder på 20–35 ms
+            if (self.tap.bw or 0) >= 1500:
+                rm = _ramperiod(snap[0], snap[1], lo_ms=50.0, min_r=0.07, min_kvot=4.0)
+                self._ram3.append(rm[0] if rm else None)
+        vals = [x for x in self._ram3 if x]
+        if vals:
+            ref = float(np.median(vals))
+            lika = [x for x in vals if abs(x - ref) / ref < 0.015]
+            if len(lika) >= 2:
+                feat["ram3"] = float(np.median(lika))
+                if not feat.get("ram_ms"):
+                    feat["ram_ms"], feat["ram_minne"] = feat["ram3"], True
         feat["tal"] = self._tal
         feat["narvaro"] = narv
         bredd = ft.get("width") if ft else None
@@ -1887,8 +1947,9 @@ class Analyzer:
             kontext = self.kontext(f_abs) if callable(self.kontext) else ()
         except Exception:
             kontext = ()
+        sedd = bool(ft and ft.get("result") is not None and ft.get("bredd_fran") != "flagga")
         v = self.motor.steg(feat, f_abs, now, bredd=bredd, tal=self._tal, ft=feat.get("lagbaud"),
-                            kontext=kontext, narv=narv)
+                            kontext=kontext, narv=narv, sedd=sedd)
         fam = v["fam"]
         if fam is None:
             return
