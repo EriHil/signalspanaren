@@ -158,10 +158,10 @@ def modell(lstm=True):
     return tf.keras.Model(inp, out)
 
 
-def trana_ctc(m, X, Y, epoker, Xv, Yv):
+def trana_ctc(m, X, Y, epoker, Xv, Yv, lr=3e-3):
     import tensorflow as tf
     # hög inlärningstakt + gradientklippning behövs för att komma förbi CTC:s platå (bara blanktecken)
-    opt = tf.keras.optimizers.Adam(3e-3, clipnorm=5.0)
+    opt = tf.keras.optimizers.Adam(lr, clipnorm=5.0)
     B = 32
     rng = np.random.default_rng(0)
 
@@ -196,9 +196,9 @@ def trana_ctc(m, X, Y, epoker, Xv, Yv):
         cer = np.mean([fel(ALFABET_text(Yv[i]), avkoda_nn(m, Xv[i])) for i in range(min(150, len(Xv)))])
         print(f"  epok {ep + 1}: förlust {np.mean(ls):.3f}, teckenfel (validering) {cer * 100:.1f} %", flush=True)
         if ep == epoker // 2:
-            opt.learning_rate.assign(1e-3)
+            opt.learning_rate.assign(lr / 3)
         elif ep == (3 * epoker) // 4:
-            opt.learning_rate.assign(3e-4)
+            opt.learning_rate.assign(lr / 10)
 
 
 def ALFABET_text(y):
@@ -309,6 +309,8 @@ def main():
     ap.add_argument("--antal", type=int, default=6000)
     ap.add_argument("--epoker", type=int, default=12)
     ap.add_argument("--spara", help="spara modellen (.keras)")
+    ap.add_argument("--fran", metavar="MODELL", help="fortsätt träna en sparad modell (.keras)")
+    ap.add_argument("--lr", type=float, default=3e-3, help="inlärningstakt i början")
     a = ap.parse_args()
     if a.typ == "lstm":
         lstm_pulser()
@@ -317,8 +319,13 @@ def main():
     X, Y = datamangd(a.antal, 100000)
     Xv, Yv = datamangd(300, 900000)
     print(f"{len(X)} klipp, {sum(len(y) for y in Y)} tecken. Tränar {a.typ} …", flush=True)
-    m = modell(lstm=(a.typ == "crnn"))
-    trana_ctc(m, X, Y, a.epoker, Xv, Yv)
+    if a.fran:
+        import tensorflow as tf
+        m = tf.keras.models.load_model(a.fran, compile=False)
+        print(f"Fortsätter från {a.fran}", flush=True)
+    else:
+        m = modell(lstm=(a.typ == "crnn"))
+    trana_ctc(m, X, Y, a.epoker, Xv, Yv, lr=a.lr)
     if a.spara:
         m.save(a.spara)
     utvardera(m)
