@@ -889,8 +889,8 @@ class SimSource(BaseSource):
         self.low = [(99.9e6 + off, sig, amp) for off, _n, sig, amp in analys.test_signals(48000)]
         self.low.append((99.9e6, analys.make_morse(48000, "CQ CQ DE SM5SIM SM5SIM PSE K   ", 20), 0.05))
         # CW-band på 99,45 MHz från CW-generatorn: en FAV22-lik station med träningsgrupper och
-        # fladder (mitt), ett QSO med bug och QSB, en rak nyckel med chirp, Farnsworth, en svag
-        # station och en stark contest-station tätt intill – att öva avkodaren på
+        # fladder (mitt), ett växel-QSO, ett överlappande par, en fyr, en rak nyckel med chirp,
+        # Farnsworth, en svag station och starka contest-stationer tätt intill – att öva på
         try:
             self.low.append((99.45e6, _sim_cw_band(48000), 0.05))
         except Exception:
@@ -1002,9 +1002,16 @@ def _sim_cw_band(fs, sek=40.0):
     import cwgenerator as G
     rng = np.random.default_rng(22)
     S = G.Station
+    # QSO där två stationer turas om (−1200 Hz och 25 Hz bredvid, olika styrka och takt)
+    qa = S("", wpm=20, nyckel="bug", qsb=0.5, off_hz=-1200, niva_db=-3)
+    qb = S("", wpm=16, nyckel="rak", off_hz=-1175, niva_db=-10, fd=2, rice=2.0)
+    G.planera_turer([qa, qb], G.qso_turer(rng), rng=rng)
     band = G.Band([
         S(G.grupper(rng, 30), wpm=24, fd=5, rice=1.0, namn="FAV22-lik"),                    # 0 Hz
-        S(G.qso(rng), wpm=20, nyckel="bug", qsb=0.5, off_hz=-1200, niva_db=-3),
+        qa, qb,
+        S(G.qso(rng), wpm=22, off_hz=-600, niva_db=-2),                                    # överlappande par:
+        S(G.bulletin(rng), wpm=18, off_hz=-560, niva_db=-8),                               # 40 Hz isär
+        S(G.fyr(rng), wpm=15, off_hz=600, niva_db=-6),
         S(G.qso(rng), wpm=14, nyckel="rak", chirp_hz=10, off_hz=-2400, niva_db=-6),
         S(G.klartext(rng), wpm=20, farnsworth=10, off_hz=1100, niva_db=-4),
         S(G.cq(rng), wpm=18, off_hz=2300, niva_db=-20),

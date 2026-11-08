@@ -1682,9 +1682,9 @@ class CwAvkodare(Avkodare):
     T_LO = 0.15        # s, brusnivån följer pauserna uppåt (störningar i pauserna höjer den snabbt)
     T_LO_NED = 0.15    # s, … och nedåt
     T_DEC = 0.7        # s, i pauser sjunker tonnivån mot bruset (glömmer gamla fädningstoppar)
-    P_ON = 0.7         # tröskel för ton på: brus·(ton/brus)^P_ON – mitt emellan i log-skala, så en
+    P_ON = 0.6         # tröskel för ton på: brus·(ton/brus)^P_ON – mitt emellan i log-skala, så en
     P_OFF = 0.6        # fädande ton 10 dB under den förra syns ändå; P_OFF = tröskel för ton av
-    F_MIN = 0.5        # men aldrig under brus + F_MIN·(ton − brus): filtret drar ut flankerna
+    F_MIN = 0.35       # men aldrig under brus + F_MIN·(ton − brus): filtret drar ut flankerna
     LO_GRANS = 1.0     # brusnivån uppdateras bara under brus + LO_GRANS·(ton − brus)
     GOLV = 2.5         # tonen måste vara minst så här många gånger brusnivån
 

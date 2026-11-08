@@ -13,7 +13,9 @@ utbredningsväg (fladder, QSB, frekvensdrift). Bandet får brus, åskknaster och
   python3 cwgenerator.py --dataset 40 --mapp ~/cw-ovning                40 slumpade scenarier med facit
   python3 cwgenerator.py --lista                                        visa scenarierna
 
-Scenarier: ren, fav22, qso, rak, contest, svag, qrn, trangt, farnsworth, bug.
+Scenarier: ren, fav22, qso, rak, contest, svag, qrn, trangt, farnsworth, bug,
+vaxel (QSO där två stationer turas om), nat (tre stationer), overlapp (två samtidigt 40 Hz
+isär), nollstampel (svagare station 6 Hz bort), pileup och blandat (fyr, siffror, bulletin …).
 I programmet finns ett CW-band i simulatorn på 99,45 MHz (källa: Simulator).
 """
 import argparse
@@ -21,7 +23,7 @@ import math
 import os
 import string
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -71,6 +73,38 @@ def contest(rng):
     return " ".join(f"{a} 5NN {rng.integers(1, 999):03d} TU" for _ in range(6))
 
 
+def fyr(rng):
+    """Fyr (beacon): samma korta text om och om igen."""
+    a = anrop(rng)
+    return f"VVV VVV DE {a}/B {a}/B QTH JO89 PWR 5W"
+
+
+def siffror(rng, n=20):
+    """Siffergrupper om fem (som sifferstationer och militära övningar)."""
+    return grupper(rng, n, 5, string.digits)
+
+
+def bulletin(rng):
+    """Ett längre meddelande (QST/bulletin) med tecken som = och /."""
+    a = anrop(rng)
+    return (f"QST QST QST DE {a} = BULLETIN NR {rng.integers(1, 99)} = "
+            f"CONTEST THIS WEEKEND ON 40 ES 80 M / ALL MODES / PSE QRX 5 MIN = "
+            f"QRG 7025 ES 3525 KHZ = 73 DE {a} AR")
+
+
+def qso_turer(rng):
+    """Ett QSO som växlar mellan två stationer: [(0 eller 1, text), …]."""
+    a, b = anrop(rng), anrop(rng)
+    n1, n2 = rng.choice(["ERIK", "ANNA", "PER", "JAN", "OLE", "HANS"], 2, replace=False)
+    r1, r2 = rng.choice(["599", "579", "559", "449"], 2)
+    return [(0, f"CQ CQ CQ DE {a} {a} K"),
+            (1, f"{a} DE {b} {b} K"),
+            (0, f"{b} DE {a} GM UR RST {r1} {r1} NAME {n1} {n1} HW? {b} DE {a} K"),
+            (1, f"{a} DE {b} R TNX UR RST {r2} {r2} NAME {n2} {n2} = 73 {a} DE {b} K"),
+            (0, f"{b} DE {a} TNX FER QSO 73 ES GL {b} DE {a} SK"),
+            (1, "TU 73 E E")]
+
+
 def klartext(rng):
     meningar = ["THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG", "NOW IS THE TIME FOR ALL GOOD MEN",
                 "WX HR IS SUNNY ES WARM", "MY RIG IS A HOMEBREW TX ES ANT IS A DIPOLE",
@@ -101,6 +135,8 @@ class Station:
     qsb_period: float = 8.0
     start_s: float = 0.0
     namn: str = ""
+    turer: list = None          # [(start_s, text), …]: sänder i turer i stället för att slinga texten
+    mal: bool = None            # hör till facit (None: bara station 0)
 
 
 def nyckla(st, rng):
@@ -154,11 +190,29 @@ def _flutter(n, fs, fd, rice, rng):
 
 def station_signal(st, fs, n, rng):
     """Komplext basband (längd n) för en station; nyckeln börjar efter st.start_s och slingas."""
-    seq = nyckla(st, rng)
     key = np.zeros(n, np.float32)
+    bitar = []                                 # [(starttid, text som hann sändas helt)] – facit
+    if st.turer:
+        for t0, text in st.turer:
+            sq = nyckla(replace(st, text=text), rng)
+            t, sant = t0, []
+            for v, d, tg in sq:
+                if t >= n / fs:
+                    break
+                a, b = int(t * fs), int((t + d) * fs)
+                if v:
+                    key[a:min(b, n)] = 1.0
+                elif tg and t < n / fs - 0.05:
+                    sant.append(tg)
+                t += d
+            if sant:
+                bitar.append((t0, " ".join("".join(sant).split())))
+        seq = []
+    else:
+        seq = nyckla(st, rng)
     t = st.start_s
     i = 0
-    sant = []                                  # det som hann sändas helt (facit)
+    sant = []
     while t < n / fs and seq:
         v, d, tg = seq[i % len(seq)]
         a, b = int(t * fs), int((t + d) * fs)
@@ -171,6 +225,8 @@ def station_signal(st, fs, n, rng):
         if i % len(seq) == 0:
             t += 2.0                           # paus innan texten börjar om
             sant.append(" ")
+    if seq and sant:
+        bitar.append((st.start_s, " ".join("".join(sant).split())))
     # flanker (stig-/falltid) med upphöjd cosinus
     L = max(1, int(st.flank_ms * 1e-3 * fs))
     if L > 1:
@@ -197,7 +253,27 @@ def station_signal(st, fs, n, rng):
         z = z * _flutter(n, fs, st.fd, st.rice, rng)
     if st.qsb:
         z = z * (1 - st.qsb * (0.5 + 0.5 * np.sin(2 * np.pi * tt / st.qsb_period + rng.uniform(0, 6))))
-    return z.astype(np.complex64), " ".join("".join(sant).split())
+    return z.astype(np.complex64), bitar
+
+
+def sandningslangd(st, text):
+    """Ungefärlig längd i sekunder för en sändning (för att planera turer)."""
+    return sum(d for _, d, _ in nyckla(replace(st, text=text), np.random.default_rng(0)))
+
+
+def planera_turer(stationer, turer, start=0.5, paus=(0.8, 2.0), rng=None, overlapp=0.0):
+    """Fördelar turer [(stationsindex, text), …] i tidsordning. Nästa tur börjar efter en paus;
+    overlapp > 0 låter nästa station börja innan den förra är klar (sekunder), som när någon
+    svarar för tidigt eller två ropar samtidigt."""
+    rng = rng or np.random.default_rng(0)
+    t = start
+    for st in stationer:
+        st.turer = []
+    for k, text in turer:
+        st = stationer[k]
+        st.turer.append((t, text))
+        t += sandningslangd(st, text) + float(rng.uniform(*paus)) - overlapp
+    return t
 
 
 @dataclass
@@ -215,12 +291,15 @@ def generera(band, fs=12000, sek=60.0, seed=1):
     rng = np.random.default_rng(seed)
     n = int(fs * sek)
     z = np.zeros(n, np.complex64)
-    facit = ""
+    bitar = []
+    harmal = any(st.mal for st in band.stationer)
     for k, st in enumerate(band.stationer):
-        s, sant = station_signal(st, fs, n, rng)
+        s, b = station_signal(st, fs, n, rng)
         z += s
-        if k == 0:
-            facit = sant
+        if st.mal or (not harmal and k == 0):
+            bitar += b
+    # facit: alla målstationers sändningar i tidsordning (ett QSO blir hela dialogen)
+    facit = " ".join(t for _, t in sorted(bitar))
     if band.barvag_hz is not None:
         tt = np.arange(n) / fs
         z += (10 ** (band.barvag_db / 20) * np.exp(2j * np.pi * band.barvag_hz * tt)).astype(np.complex64)
@@ -271,15 +350,65 @@ def scenario(namn, rng):
         return Band([Station(klartext(rng), wpm=20, farnsworth=10)], snr_db=20)
     if namn == "bug":
         return Band([Station(qso(rng), wpm=24, nyckel="bug", vikt=3.6)], snr_db=20)
+    if namn == "vaxel":
+        # QSO där två stationer sänder växelvis: olika styrka, takt, nyckel och lite olika frekvens
+        A = Station("", wpm=22, mal=True, qsb=0.3)
+        B = Station("", wpm=17, nyckel="bug", off_hz=25, niva_db=-8, mal=True, fd=2, rice=2.0)
+        planera_turer([A, B], qso_turer(rng), rng=rng)
+        return Band([A, B], snr_db=20)
+    if namn == "nat":
+        # nät med tre stationer som turas om (olika frekvens ±40 Hz, styrka och takt)
+        S = [Station("", wpm=w, off_hz=o, niva_db=l, mal=True, nyckel=k)
+             for w, o, l, k in ((20, 0, 0, "maskin"), (16, -35, -10, "rak"), (25, 40, -4, "bug"))]
+        a, b, c = anrop(rng), anrop(rng), anrop(rng)
+        tur = [(0, f"QNI QNI DE {a} NET CONTROL K"), (1, f"{a} DE {b} QNI K"), (2, f"{a} DE {c} QNI K"),
+               (0, f"{b} {c} QSL = QTC? K"), (1, "NIL K"), (2, "QTC 1 = WX HR FINE = K"),
+               (0, f"QSL QRU? = QNX 73 DE {a} SK")]
+        planera_turer(S, tur, rng=rng)
+        return Band(S, snr_db=18)
+    if namn == "overlapp":
+        # två stationer sänder samtidigt 40 Hz isär; den som ska avkodas är 6 dB starkare
+        return Band([Station(qso(rng), wpm=22),
+                     Station(bulletin(rng), wpm=18, off_hz=40, niva_db=-6)], snr_db=22)
+    if namn == "nollstampel":
+        # en svagare station nästan på samma frekvens (6 Hz isär, 12 dB svagare) – svävning
+        return Band([Station(klartext(rng), wpm=20),
+                     Station(cq(rng), wpm=26, off_hz=6, niva_db=-12, start_s=3)], snr_db=22)
+    if namn == "pileup":
+        # DX-station (mål) som kör pileup; många ropare samtidigt strax intill, i pauserna
+        dx = anrop(rng)
+        D = Station("", wpm=28, mal=True)
+        rop = [anrop(rng) for _ in range(5)]
+        tur, t = [], 0.5
+        D.turer = []
+        for i in range(5):
+            D.turer.append((t, f"{rop[i]} 5NN TU {dx}" if i else f"CQ DE {dx} {dx} UP"))
+            t += sandningslangd(D, D.turer[-1][1]) + 2.5
+        R = []
+        for j, r in enumerate(rop):
+            st = Station("", wpm=float(rng.uniform(18, 35)), off_hz=float(rng.uniform(-60, 60)),
+                         niva_db=float(rng.uniform(-14, -4)), nyckel=str(rng.choice(["maskin", "bug", "rak"])))
+            st.turer = [(D.turer[i][0] + sandningslangd(D, D.turer[i][1]) + float(rng.uniform(0.1, 0.6)),
+                         f"{r} {r}") for i in range(min(j + 1, 4))]
+            R.append(st)
+        return Band([D] + R, snr_db=20)
+    if namn == "blandat":
+        # ett helt band: fyr, sifferstation, bulletin, contest och QSO – mål är fyren i mitten
+        return Band([Station(fyr(rng), wpm=15),
+                     Station(siffror(rng), wpm=20, off_hz=320, niva_db=3),
+                     Station(bulletin(rng), wpm=22, off_hz=-280, niva_db=0, fd=3, rice=1.5),
+                     Station(contest(rng), wpm=34, off_hz=700, niva_db=8),
+                     Station(qso(rng), wpm=18, nyckel="rak", off_hz=-650, niva_db=-5)], snr_db=20, qrn=0.5)
     raise SystemExit(f"Okänt scenario: {namn}")
 
 
-SCENARIER = ["ren", "fav22", "qso", "rak", "contest", "svag", "qrn", "trangt", "farnsworth", "bug"]
+SCENARIER = ["ren", "fav22", "qso", "rak", "contest", "svag", "qrn", "trangt", "farnsworth", "bug",
+             "vaxel", "nat", "overlapp", "nollstampel", "pileup", "blandat"]
 
 
 def slumpat(rng):
     """Ett slumpat band (för träning): takt, nyckel, fädning, brus och grannar varierar."""
-    text = rng.choice([qso, cq, contest, klartext, lambda r: grupper(r, 20)])(rng)
+    text = rng.choice([qso, cq, contest, klartext, fyr, bulletin, siffror, lambda r: grupper(r, 20)])(rng)
     st = Station(text, wpm=float(rng.uniform(10, 40)),
                  nyckel=str(rng.choice(["maskin", "maskin", "bug", "rak"])),
                  farnsworth=float(rng.uniform(6, 12)) if rng.random() < 0.15 else None,
