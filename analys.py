@@ -949,7 +949,12 @@ def analyze(z, fs, bw):
     # FSK med två toner ger också ett symmetriskt linjepar (avstånd = 2·shift). MSK är FSK med h = 0,5:
     # linjeavståndet är lika med symboltakten, som mäts för sig ur symbollinjerna (RTTY: 50 Bd mot 900 Hz)
     if msk and not (baud and abs(baud / msk - 1.0) < 0.05):
-        msk = None
+        # symboltakten kan vara felmätt (NAA: 62,5 Bd i första stegen): pröva i stället om frekvensbytena
+        # har takten msk – för MSK ja (ett byte per symbol), för RTTY nej (50 Bd mot 900 Hz linjeavstånd)
+        tr = np.abs(np.diff(fi))
+        fb_m, sb_m = _line(tr.astype(np.float64), fs, 0.95 * msk, min(1.05 * msk, fs / 2.2))
+        if not (fb_m and sb_m >= 15):
+            msk = None
     if msk:
         psk = None
         out["baud"], out["baud_styrka"] = msk, 30.0
@@ -1992,6 +1997,8 @@ class Analyzer:
                 feat["avkodare"] = dd.namn
                 if dd.har_synk():
                     fk = dd.fakta()
+                    if fk and feat.get("msk") and fk.get("fam") in ("BPSK", "QPSK", "PSK8"):
+                        fk = None            # MSK är sett i z²: en PSK-avkodares synk är falsk
                     if fk:
                         feat.update(fk)
                         feat["fakta_fran"] = dd.namn

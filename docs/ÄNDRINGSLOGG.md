@@ -101,6 +101,8 @@
 
 - **Nycklade bärvågar känns igen över 3 s.** RWM:s sekundpulser syns sällan inom ett analyssteg på 0,4 s. Bärvågens varierande nivå gav då stöd för AM (RWM 14996 kHz: rätt typ i 24 % av stegen). Nu prövar motorn om bärvågen slås av och på i 50 ms-rutor över 3 s. Det ger starkt stöd för OOK, utom när steget självt mäter PSK eller FSK, eftersom PSK31 också har sändningspauser, eller när FSK nyss mätts, eftersom en fädad FSK-ton ser ut som en ensam bärvåg. RWM 14996 kHz: 100 %. DCF77-facit godtar också BPSK, eftersom pseudoslumpkoden är binär fasmodulering. Facitbiblioteket: rätt typ i 97 % av stegen.
 
+- **MSK skyddas mot falsk PSK-synk.** På NAA (24 kHz) fick PSK31/PSK63-avkodaren falsk synk på MSK-signalen och skrev över familjen till BPSK. Nu körs PSK-avkodaren inte när MSK-linjerna syns, och en avkodares fakta får inte göra MSK till PSK. MSK godtas också när symboltakten är felmätt, om frekvensbytena har just den takten (ett byte per symbol, vilket RTTY inte har). NAA: rätt typ i 100 % av stegen (förut 29 %). Facitbiblioteket: 98 %.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

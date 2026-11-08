@@ -1234,6 +1234,8 @@ class PskAvkodare(FiAvkodare):
         self.bad_chars = 0
 
     def passar(self, feat):
+        if feat.get("msk"):
+            return False                 # MSK-linjerna i z² är sedda: inte PSK (falsk synk på VLF-stationer)
         k = feat.get("kandidater") or []
         if k and k[0][1]["namn"] in ("PSK31", "PSK63"):
             return True
