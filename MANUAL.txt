@@ -280,6 +280,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
  Mätverktyg för signalanalysen (för utveckling)
   python3 analystest.py mat      kör analysen på facitklipp och syntetiska signaler och visar
                                  hur ofta signaltyp, bandbredd och förslag blir rätt
+  python3 analystest.py cw       testar Morse-avkodningen vid flera hastigheter och blockstorlekar
   python3 analystest.py samla    spelar in klippen i facit.json från KiwiSDR
   python3 analystest.py spela-in --frekvens 7.1 --fam SSB --bredd 1800-3200 --namn "SSB 40 m"
   Klippen sparas i ~/.local/share/signalspanaren/facit-klipp/.

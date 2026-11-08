@@ -10,6 +10,7 @@ analysen bättre eller sämre, och som underlag för att träna klassningen.
 
   python3 analystest.py mat                    mät på inspelade klipp + syntetiska signaler
   python3 analystest.py mat --bara-syntetiskt  bara de syntetiska (snabbt, ingen nätåtkomst)
+  python3 analystest.py cw                     testa CW-avkodning vid flera hastigheter och blockstorlekar
   python3 analystest.py mat --spara r.json     spara resultatet (för jämförelse senare)
   python3 analystest.py mat --jamfor r.json    visa vad som blivit bättre/sämre mot en tidigare körning
   python3 analystest.py samla                  spela in klipp från KiwiSDR för signalerna i facit.json
@@ -382,6 +383,29 @@ def spela_in(args):
     return 0
 
 
+def testa_cw(_args):
+    fs = 12000.0
+    expected = "THE QUICK BROWN FOX 1234567890"
+    rng = np.random.default_rng(42)
+    if analys.CwAvkodare not in analys.AVKODARE:
+        print("CW-avkodaren är inte registrerad i analysens pluginlista.")
+        return 1
+    for wpm in (8, 12, 18, 30, 40):
+        signal = np.concatenate((np.zeros(int(fs * 0.5), np.complex64),
+                                 analys.make_morse(fs, expected, wpm=wpm)))
+        signal += (0.005 * (rng.standard_normal(len(signal)) + 1j * rng.standard_normal(len(signal)))).astype(
+            np.complex64)
+        for block in (1024, 4096, 12000):
+            decoder = analys.CwAvkodare()
+            text = "".join(decoder.feed(signal[i:i + block], fs, {"fam": "OOK"})
+                           for i in range(0, len(signal), block))
+            if text.strip() != expected:
+                print(f"Fel vid {wpm} ord/min och blockstorlek {block}: {text.strip()!r}")
+                return 1
+    print("CW-avkodaren klarade 8–40 ord/min med brus och alla testade blockstorlekar.")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="analystest", description="Mät Signalspanarens signalanalys mot facit.")
     p.add_argument("--mapp", default=KLIPP_DIR, help=f"mapp för facit-klipp (standard {KLIPP_DIR})")
@@ -404,8 +428,9 @@ def main():
     e.add_argument("--namn")
     e.add_argument("--kiwi", metavar="ADRESS")
     e.add_argument("--sekunder", type=float, default=20.0)
+    sub.add_parser("cw", help="testa CW-avkodning vid flera hastigheter och blockstorlekar")
     args = p.parse_args()
-    return {"mat": mat, "samla": samla, "spela-in": spela_in}[args.kommando](args)
+    return {"mat": mat, "samla": samla, "spela-in": spela_in, "cw": testa_cw}[args.kommando](args)
 
 
 if __name__ == "__main__":

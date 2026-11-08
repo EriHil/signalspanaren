@@ -1536,7 +1536,10 @@ class CwAvkodare(Avkodare):
         self.lvl_lo = None
         self.wpm = None
         self._last_dot = None
-        self.space_done = True
+        self.pending = []
+        self.letter_done = False
+        self.word_done = False
+        self.last_output = ""
 
     def passar(self, feat):
         return feat.get("fam") == "OOK"
@@ -1573,13 +1576,7 @@ class CwAvkodare(Avkodare):
             if b == self.state:
                 self.run += 1
                 if not b and dot:
-                    if self.sym and self.run >= 2.2 * dot * R:
-                        out.append(MORSE.get(self.sym, "*"))
-                        self.sym = ""
-                        self.space_done = False
-                    if not self.space_done and self.run >= 5.5 * dot * R:
-                        out.append(" ")
-                        self.space_done = True
+                    self._decode_gap(self.run / R, dot, out)
                 continue
             if self.state:        # tonen slutade
                 dur = self.run / R
@@ -1588,24 +1585,59 @@ class CwAvkodare(Avkodare):
                     self.run = 1
                     continue
                 self.ons.append(dur)
+                self.pending.append((True, dur))
                 dot = self._dot()
                 if dot:
-                    self.sym += "." if dur < 2 * dot else "-"
+                    self._consume_pending(dot, out)
+                    self.letter_done = False
+                    self.word_done = False
             else:                 # pausen slutade – en ny ton börjar
-                self.space_done = True if not self.sym and self.run < 5.5 * (dot or 1) * R else self.space_done
+                gap = self.run / R
+                if not dot:
+                    self.pending.append((False, gap))
             self.state = bool(b)
             self.run = 1
         return "".join(out)
 
+    def _consume_pending(self, dot, out):
+        for is_mark, duration in self.pending:
+            if is_mark:
+                self.sym += "." if duration < 2 * dot else "-"
+            else:
+                self.letter_done = False
+                self.word_done = False
+                self._decode_gap(duration, dot, out)
+        self.pending.clear()
+
+    def _decode_gap(self, duration, dot, out):
+        if duration >= 2.2 * dot and not self.letter_done:
+            if self.sym:
+                self._emit(MORSE.get(self.sym, "*"), out)
+                self.sym = ""
+            self.letter_done = True
+        if duration >= 5.5 * dot and not self.word_done:
+            if self.sym:
+                self._emit(MORSE.get(self.sym, "*"), out)
+                self.sym = ""
+                self.letter_done = True
+            if self.last_output and self.last_output != " ":
+                out.append(" ")
+                self.last_output = " "
+            self.word_done = True
+
+    def _emit(self, text, out):
+        out.append(text)
+        self.last_output = text[-1]
+
     def _dot(self):
-        if len(self.ons) < 6:
-            return None
+        if len(self.ons) < 4:
+            return self._last_dot
         x = np.asarray(self.ons)
         x = x[x > 0.012]
         if len(x) < 4:
-            return None
+            return self._last_dot
         p10, p90 = np.percentile(x, 10), np.percentile(x, 90)
-        if p90 / p10 > 2:
+        if p90 / p10 > 1.6:
             dot = float(np.median(x[x < math.sqrt(p10 * p90)]))
         else:
             dot = self._last_dot or float(np.median(x))
