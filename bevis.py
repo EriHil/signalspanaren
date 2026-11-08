@@ -118,7 +118,39 @@ def tal_matt(z, fs):
     s_stav = 1.0 / (1.0 + math.exp(-(stav - 0.35) / 0.07))
     s_oreg = 1.0 / (1.0 + math.exp((skarp - 12.0) / 3.0))
     m = s_dyn * s_stav * (0.4 + 0.6 * s_oreg)
-    return float(m), {"dyn": dyn, "stav": stav, "skarp": skarp}
+    # svagt tal: stavelse–paus-skillnaden drunknar i bruset, men nivån varierar ändå mer än brus
+    # (narvaro) och i stavelsetakt. Fädning är långsammare (< 2 Hz) och syns inte i 2–8 Hz.
+    narv = narvaro(z, fs)
+    if narv is not None and narv >= 1.8:
+        s_narv = 1.0 / (1.0 + math.exp(-(narv - 2.2) / 0.3))
+        m = max(m, s_narv * s_stav * (0.4 + 0.6 * s_oreg))
+    return float(m), {"dyn": dyn, "stav": stav, "skarp": skarp, "narv": narv}
+
+
+def narvaro(z, fs, bw=None):
+    """Finns något i kanalen som inte är brus? Energin i rutor om 50 ms jämförs med brusets egen
+    spridning, mätt ur skillnaden mellan rutornas två halvor (25 ms). Den skillnaden är nästan bara brus:
+    tal, nyckling och skurar ändrar sig långsammare. Kanalfiltret gör att en teoretisk spridning inte
+    stämmer, därför mäts den. Returnerar kvoten (≈ 1 för brus, tydligt mer när något sänder) eller None."""
+    z = np.asarray(z)
+    fr = max(2, int(fs * 0.05)) // 2 * 2
+    n = len(z) // fr
+    if n < 30:
+        return None
+    p = np.abs(z[:n * fr]) ** 2
+    h = p.reshape(n, 2, fr // 2).mean(axis=2)
+    ha, hb = 10 * np.log10(h[:, 0] + 1e-20), 10 * np.log10(h[:, 1] + 1e-20)
+    hel = 10 * np.log10(h.mean(axis=1) + 1e-20)
+
+    def sprid(x):
+        q75, q25 = np.percentile(x, [75, 25])
+        return (q75 - q25) / 1.35
+
+    # halvornas skillnad har spridningen √2·σ_halv; en hel ruta (dubbelt så lång) har σ_halv/√2
+    forv = sprid(ha - hb) / 2.0
+    if forv <= 1e-6:
+        return None
+    return float(sprid(hel) / forv)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -135,7 +167,7 @@ def _bredd_straff(h, w):
     return 0.0
 
 
-def steg_bevis(feat, f_abs, bredd, tal=None, ft=None):
+def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None):
     """{hypotes: {term: poäng}} för ett analyssteg. bredd = kanalens uppmätta bredd (stabil, över 2 s)."""
     B = {h: {} for h in HYP}
 
@@ -151,7 +183,11 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None):
         for s in SLAKT:
             if raw in s:
                 ge(s - {raw}, "mätning (släkt)", 0.5)
-    if snr < 1:
+    if narv is not None and narv >= 2.0:
+        # tydligt mer variation än brus: något sänder, även om medel-SNR är lågt. Säger inget om vad –
+        # på HF varierar alla signaler av fädning (ren STANAG 4285 ger lika hög kvot som tal)
+        ge(["BRUS"], "signal i bruset", -min(3.0, narv - 1.0))
+    elif snr < 1:
         ge(["BRUS"], "lågt SNR", 1.0)
     elif snr > 8:
         ge(["BRUS"], "tydlig signal", -2.0)
@@ -166,13 +202,15 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None):
                 ge([h], "bandbredd", 0.6 * v)
     # 3. envelop
     cv = feat.get("cv") or 0.0
-    if not feat.get("skurar"):
+    if snr < 6:
+        pass                           # i bruset säger envelopen inget: den är brusets, inte signalens
+    elif not feat.get("skurar"):
         if cv < 0.15:
             ge(["FM", "FSK2", "FSK4", "MFSK", "BÄRVÅG", "FT8", "FT4"], "konstant envelop", 0.6)
             ge(["SSB", "OOK"], "konstant envelop", -0.8)
         elif cv > 0.35:
             ge(["SSB", "AM", "LIN", "QPSK", "PSK8", "OFDM", "BPSK"], "varierande envelop", 0.3)
-            ge(["FM", "BÄRVÅG", "FSK2"], "varierande envelop", -0.6)
+            ge(["FM", "BÄRVÅG", "FSK2", "FSK4", "MFSK", "MSK"], "varierande envelop", -0.6)
     else:
         ge(["OOK"], "på/av", 0.8)
         ge(["AM", "FM", "BÄRVÅG"], "på/av", -0.5)
@@ -186,8 +224,8 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None):
     # 5. tal (långt fönster) – det starkaste beviset mot digitalt
     # Bara åt det positiva hållet: musik (AM-rundradio) och FM-tal (konstant envelop) saknar talrytm
     # i envelopen utan att vara digitala.
-    if tal is not None and tal > 0.5:
-        t = (tal - 0.5) * 2.0          # 0 … 1
+    if tal is not None and tal > 0.3:
+        t = (tal - 0.3) / 0.7          # 0 … 1
         ge(TAL, "talrytm", 1.5 * t)
         ge(DIGITAL | {"BÄRVÅG"}, "talrytm", -1.5 * t)
         if w > 600:
@@ -229,7 +267,7 @@ class Bevismotor:
                 P[h][txt] = P[h].get(txt, 0.0) + v
         return P
 
-    def steg(self, feat, f_abs, now, bredd=None, tal=None, ft=None, kontext=()):
+    def steg(self, feat, f_abs, now, bredd=None, tal=None, ft=None, kontext=(), narv=None):
         if self.t is not None:
             k = math.exp(-max(0.0, now - self.t) / self.TAU)
             for h in HYP:
@@ -237,7 +275,7 @@ class Bevismotor:
                     self.A[h][term] *= k
         self.t = now
         self.n += 1
-        for h, termer in steg_bevis(feat, f_abs, bredd, tal, ft).items():
+        for h, termer in steg_bevis(feat, f_abs, bredd, tal, ft, narv).items():
             for term, v in termer.items():
                 self.A[h][term] = self.A[h].get(term, 0.0) + self.SKALA * v
         P = self.prior(f_abs, kontext)

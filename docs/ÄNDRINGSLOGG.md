@@ -70,6 +70,12 @@
 
 - **Signaltyp-rutan säger aldrig emot rubriken.** Rutan till höger låste en typ ur signaldatabasen utan att jämföra den med analysens signalfamilj. Den kunde till exempel visa "SSB-tal 100 %" medan rubriken sa "Osäker – kanske 4-FSK". Nu låses bara en typ vars modulation passar den familj bevismotorn visar. Om motorn byter till en familj som inte passar släpper rutan typen och söker igen. Din egen klassning och typer du har valt i rullistan ändras inte. Provat live på Shannon VOLMET 5505 kHz (svag): rutan stod på "söker" medan analysen visade brus och låste SSB-tal först när analysen visade SSB.
 
+- **Svaga signaler känns igen snabbare.** Ett svagt SSB-tal visades förut som "Ingen signal" i upp till 20 s. Det hade två orsaker:
+  - **Bandbreddsmätningen** jämförde varje frekvenspunkt med bruset. Tal som bara ligger 1–3 dB över bruset syntes inte, och kanalen blev 400 Hz. Nu finns en reservmätning på ett spektrum som slätats ut över 300 Hz. Den används bara när signalen vid klicket är svag (under 6 dB) och bandet under 4 dB, så starka signaler och grannsignaler påverkas inte. Ett klick mellan två FSK-toner går fortfarande till FSK-parsökningen.
+  - **Bevismotorn** tolkade lågt SNR som brus. Nu mäter den om nivån i kanalen varierar mer än brus gör (närvaro), och den spridningen mäts ur själva datan. Taldetektorn känner igen tal även i bruset, via stavelserytmen. Envelopen räknas inte som bevis under 6 dB SNR, eftersom den då är brusets.
+  - Mätt med 6 dB extra brus på facitklippen: rätt typ i 49 % av stegen (förut 25 %), brus i 30 % (förut 52 %). SSB-tal blir oftast rätt, till exempel VOLMET 98 %. Rena klipp: oförändrat (98 %).
+  - Live på Shannon VOLMET 5505 kHz (svag, Heby): SSB inom 1,8 s efter klick på flaggan och sedan stabilt. Förut växlade analysen mellan brus och SSB i 20 s.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

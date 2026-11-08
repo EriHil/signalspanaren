@@ -301,7 +301,81 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0):
         r2 = _fit_res(z, fs, survey_bw, near_hz, fin)
         if r2 is not None and r2[1] >= 2.5 * fs / fin:
             r = r2
+    # svag bred signal (tal, modem, AM-sidband nära bruset): syns bara när spektrumet slätas ut
+    rs = _fit_slat(z, fs, survey_bw, near_hz, None if r is None else r[0])
+    if rs is not None and rs[4] < 4.0 and rs[5] < 6.0:
+        # bara när bandet är svagt (under 4 dB över bruset): annars drar det utslätade bandet med sig
+        # grannsignaler (och ett klick mellan två FSK-toner ska till _fsk_par), och den vanliga mätningen
+        # är bättre
+        if r is None:
+            r = _fsk_par(z, fs, survey_bw) or rs[:3]      # två FSK-toner kring klicket går före
+        else:
+            if rs[1] >= 4 * r[1] and abs(rs[0] - r[0]) <= 0.15 * rs[1] and rs[3] >= 0.4 \
+                    and _fsk_par(z, fs, survey_bw) is None:      # två FSK-toner är också spegelsymmetriska
+                r = rs[:3]      # en smal topp mitt i ett brett, symmetriskt band: AM-bärvåg i brus
+            elif r[1] >= 300.0 and rs[1] >= 2 * r[1] and rs[0] - rs[1] / 2 <= r[0] <= rs[0] + rs[1] / 2:
+                r = rs[:3]      # en bit av ett brett band (en formant i svagt tal): hela bandet gäller
     return r
+
+
+def _fit_slat(z, fs, survey_bw, near_hz, kring=None, slat_hz=300.0):
+    """Bandbreddsmätning på ett utslätat spektrum (medel över slat_hz). Brusets spridning minskar med
+    roten ur antalet punkter, så ett brett band som bara ligger 1–2 dB över bruset (svagt SSB-tal,
+    STANAG 4285, AM-sidband) syns. Returnerar (mitt, bredd, når_kanten, spegel kring 'kring',
+    bandets median i dB över bruset, nivån vid 'kring' i dB över bruset) eller None.
+    Smala signaler hittas bättre av _fit_res – det här är en reserv för breda."""
+    N = len(z)
+    nfft = int(np.clip(_pow2(fs / 25.0), 256, 16384))
+    while nfft > 256 and N // nfft < 8:
+        nfft //= 2
+    f, P = _welch(z, fs, nfft)
+    sel = np.abs(f) <= survey_bw / 2
+    f, P = f[sel], P[sel]
+    res = fs / nfft
+    K = max(3, int(round(slat_hz / res)))
+    if len(f) < 4 * K:
+        return None
+    Ps = uniform_filter1d(P, K, mode="nearest")
+    Pd = 10 * np.log10(Ps + 1e-30)
+    m = max(1, N // nfft)
+    sigma = 5.57 / math.sqrt(m * K) * 1.5          # 1,5: Hann-fönstrets korrelerade grannpunkter
+    floor = float(np.percentile(Pd, 10)) + 1.28 * sigma
+    thr = floor + max(0.6, 3.0 * sigma)
+    c = len(f) // 2
+    r = max(1, int(max(near_hz, 800.0) / res))    # klicket ligger någonstans i talbandet, inte i mitten
+    k0 = max(0, c - r) + int(np.argmax(Pd[max(0, c - r):c + r + 1]))
+    if Pd[k0] < thr:
+        return None
+    above = Pd > thr
+    gap = max(2, int(round(200.0 / res)))
+
+    def edge(step):
+        k, last, miss = k0, k0, 0
+        while 0 < k < len(f) - 1:
+            k += step
+            if above[k]:
+                last, miss = k, 0
+            else:
+                miss += 1
+                if miss > gap:
+                    break
+        return last
+
+    a, b = edge(-1), edge(1)
+    bredd = float(f[b] - f[a]) + res
+    if bredd < 600.0:
+        return None                                 # smalt: inte den här reservens sak
+    kant = a <= gap or b >= len(f) - 1 - gap or (b - a + 1) > 0.75 * len(f)
+    lo, hi = float(f[a]) - res / 2, float(f[b]) + res / 2
+    spegel = 0.0
+    if kring is not None:
+        kc = int(np.argmin(np.abs(f - kring)))
+        spegel = _spegel(Pd, res, kc, lo_hz=150.0, hi_hz=min(4000.0, bredd / 2))
+    golv = floor - 1.28 * sigma
+    over = float(np.median(Pd[a:b + 1])) - golv
+    # styrkan där den vanliga mätningen hittade något (en stark signal ska inte bytas mot ett brett band)
+    over_kring = over if kring is None else float(Pd[int(np.argmin(np.abs(f - kring)))]) - golv
+    return (lo + hi) / 2, hi - lo, kant, spegel, over, over_kring
 
 
 def _fsk_par(z, fs, survey_bw, max_shift=1200.0):
@@ -1544,10 +1618,12 @@ class Analyzer:
         z = snap[0]
         ft["tries"] += 1
         r = fit_bandwidth(z, fs, ft["survey"], near_hz=max(200.0, ft["guess"] * 0.5))
-        if r is None:
+        if r is None or r[1] < 150.0:
             # klick mellan FSK-tonerna (shift upp till ca 1,2 kHz): bandbreddsmätningen delar vid svackan
-            # mellan tonerna och ser ingen signal vid klicket
-            r = _fsk_par(z, fs, ft["survey"])
+            # mellan tonerna och ser ingen signal vid klicket – eller hittar bara den ena tonen (svag RTTY)
+            rp = _fsk_par(z, fs, ft["survey"])
+            if rp is not None and (r is None or abs(abs(r[0] - rp[0]) - (rp[1] - 150.0) / 2) < 60.0):
+                r = rp
         if r is not None and r[2] and ft["survey"] < ft["cap"] and ft["tries"] < self.FIT_MAX_TRIES:
             ft["survey"] = min(ft["cap"], ft["survey"] * 3.0)      # signalen är bredare än överblicken
             self.tap.set_target(tgt, ft["survey"])
@@ -1750,18 +1826,21 @@ class Analyzer:
             self.motor.nollstall()
             self._tal = None
         snap = self.tap.snapshot(3.0)
+        narv = None
         if snap is not None and len(snap[0]) >= snap[1] * 2.0:
             m, _d = bevis.tal_matt(snap[0], snap[1])
             if m is not None:
                 self._tal = m if self._tal is None else 0.6 * self._tal + 0.4 * m
+            narv = bevis.narvaro(snap[0], snap[1], self.tap.bw)
         feat["tal"] = self._tal
+        feat["narvaro"] = narv
         bredd = ft.get("width") if ft else None
         try:
             kontext = self.kontext(f_abs) if callable(self.kontext) else ()
         except Exception:
             kontext = ()
         v = self.motor.steg(feat, f_abs, now, bredd=bredd, tal=self._tal, ft=feat.get("lagbaud"),
-                            kontext=kontext)
+                            kontext=kontext, narv=narv)
         fam = v["fam"]
         if fam is None:
             return
