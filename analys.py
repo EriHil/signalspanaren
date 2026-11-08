@@ -324,6 +324,12 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0, lutning=False):
                 r = rs[:3]      # en smal topp mitt i ett brett, symmetriskt band: AM-bärvåg i brus
             elif r[1] >= 300.0 and rs[1] >= 2 * r[1] and rs[0] - rs[1] / 2 <= r[0] <= rs[0] + rs[1] / 2:
                 r = rs[:3]      # en bit av ett brett band (en formant i svagt tal): hela bandet gäller
+    # ett starkt, platt och fyllt band (modem, 1,5–4 kHz) där den vanliga mätningen fastnat på en smal bit
+    # inuti (en störning eller ett spektralt hack): hela bandet gäller
+    if rs is not None and r is not None and rs[4] >= 4.0 and rs[6] >= 0.8 and 1500.0 <= rs[1] <= 4000.0 \
+            and 200.0 <= r[1] < 0.4 * rs[1] and rs[0] - rs[1] / 2 <= r[0] <= rs[0] + rs[1] / 2:
+        # (under 200 Hz: en egen smal signal – CW, bärvåg – bredvid eller ovanpå ett band, inte en bit av det)
+        r = rs[:3]
     return r
 
 
@@ -388,7 +394,9 @@ def _fit_slat(z, fs, survey_bw, near_hz, kring=None, slat_hz=300.0, lutning=Fals
     over = float(np.median(Pd[a:b + 1])) - golv
     # styrkan där den vanliga mätningen hittade något (en stark signal ska inte bytas mot ett brett band)
     over_kring = over if kring is None else float(Pd[int(np.argmin(np.abs(f - kring)))]) - golv
-    return (lo + hi) / 2, hi - lo, kant, spegel, over, over_kring
+    # hur fyllt bandet är: ett modem har en platt topp (≈ 0,9), en samling separata signaler inte
+    fyllt = float(np.mean(Pd[a:b + 1] > golv + 0.5 * over)) if over > 0 else 0.0
+    return (lo + hi) / 2, hi - lo, kant, spegel, over, over_kring, fyllt
 
 
 def _fsk_par(z, fs, survey_bw, max_shift=1200.0, vaxling=False):
