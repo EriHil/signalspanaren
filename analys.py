@@ -456,6 +456,22 @@ def _vaxlar(z, fs, nfft, f1, f2):
     return float(np.corrcoef(p1, p2)[0, 1]) < -0.2
 
 
+def _nycklad(z, fs, fc, ruta_s=0.01):
+    """Slås bärvågen vid fc av och på? Bärvågens effekt i 10 ms-rutor (smalt filter kring fc): nycklad
+    om de starka rutorna ligger minst 10 dB över de svaga. En AM-bärvåg ligger kvar hela tiden."""
+    z = np.asarray(z, np.complex64)
+    n = len(z)
+    if n < fs * 0.5:
+        return False
+    t = np.arange(n) / fs
+    y = z * np.exp(-2j * np.pi * fc * t).astype(np.complex64)
+    k = max(4, int(fs * ruta_s))
+    m = n // k
+    p = np.abs(y[:m * k].reshape(m, k).mean(axis=1)) ** 2      # medel över rutan ≈ smalt filter (~100 Hz)
+    db = 10 * np.log10(p + 1e-30)
+    return float(np.percentile(db, 90) - np.percentile(db, 10)) >= 10.0
+
+
 def _utan_lutning(f, P):
     """Tar bort en lutning i brusgolvet (VLF: ~10 dB över fönstret). Annars ligger hela den höga sidan
     över ett golv som mätts i den låga, och grannsignaler slås ihop. En rak linje anpassas till de
@@ -549,6 +565,27 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft, slapp=False, lutning=False):
             barvag = False
     if barvag and b - a > 8 and float(np.mean(above[a:b + 1])) < 0.3:
         barvag = False      # glesa brustoppar kring en ensam bärvåg (RWM) är inga AM-sidband
+    nyck = barvag and _nycklad(z, fs, float(f[k0]))
+    if nyck:
+        # nycklad bärvåg (RWM:s sekundpulser, CW): "sidbanden" är nyckelklick som bär mer än 1 % av
+        # effekten – bredden är bärvågens, mätt där toppen fallit 20 dB (som för CW)
+        # fin upplösning (~3 Hz): bärvågen samlas i en punkt och sticker upp över de utspridda klicken
+        nf = int(np.clip(_pow2(fs / 3.0), nfft, 65536))
+        while nf > nfft and N // nf < 4:
+            nf //= 2
+        ff, PP = _welch(z, fs, nf)
+        Pf = 10 * np.log10(PP + 1e-30)
+        rf = fs / nf
+        kc = int(np.argmin(np.abs(ff - f[k0])))
+        w = max(1, int(round(2 * res / rf)))
+        kc = max(0, kc - w) + int(np.argmax(Pf[max(0, kc - w):kc + w + 1]))
+        a2 = b2 = kc
+        while a2 > 0 and Pf[a2 - 1] > Pf[kc] - 20:
+            a2 -= 1
+        while b2 < len(ff) - 1 and Pf[b2 + 1] > Pf[kc] - 20:
+            b2 += 1
+        lo2, hi2 = float(ff[a2]) - rf / 2, float(ff[b2]) + rf / 2
+        return (lo2 + hi2) / 2, hi2 - lo2, False
     if barvag:
         # AM: bärvågen är mitten och sidbanden är lika breda – den bredare sidan räknas (den smalare
         # har ofta ett hål i talet), men inte bredare än vad som ryms i överblicken
