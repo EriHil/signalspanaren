@@ -593,10 +593,16 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft, slapp=False, lutning=False):
         return float(f[k0]), 2 * half, kant
     a, b = _narrow_peak(Pd, res, a, b, k0)
     a, b = _split_valleys(Pd, res, a, b, k0, thr)
+    if lutning and (b - a) * res > 600.0:
+        # VLF/LF: smala stationer (MSK ~230 Hz) tätt intill varandra – dela även vid svackor med bara
+        # 300 Hz signal på var sida (på kortvåg skulle det klyva FSK-par)
+        a, b = _split_valleys(Pd, res, a, b, k0, thr, sida_hz=300.0, am_skydd=False)
     # 99 % av effekten (över bruset) inom signalen: en stark signals svaga kjolar (fasbrus, AGC) ligger
     # långt över brusgolvet men bär nästan ingen effekt – de ska inte räknas in i bredden
     ex = np.maximum(P[a:b + 1] - 10 ** (floor / 10), 0.0)
-    if ex.sum() > 0 and b - a >= 4 and andel < 0.3:           # inte när en bärvåg bär effekten (AM)
+    # inte när en bärvåg bär effekten (AM) – utom på VLF/LF, där riktig AM redan tagits ovan och en smal
+    # MSK-huvudlob (~240 Hz) annars ser ut som en bärvåg i grov upplösning
+    if ex.sum() > 0 and b - a >= 4 and (andel < 0.3 or lutning):
         cs = np.cumsum(ex) / ex.sum()
         a, b = a + int(np.searchsorted(cs, 0.005)), a + int(np.searchsorted(cs, 0.995))
     lo, hi = float(f[a]) - res / 2, float(f[b]) + res / 2
@@ -642,7 +648,7 @@ def _spegel(Pd, res, k, lo_hz=150.0, hi_hz=3000.0):
     return float(np.corrcoef(a_, b_)[0, 1])
 
 
-def _split_valleys(Pd, res, a, b, k0, thr, djup=10.0, sida_hz=600.0):
+def _split_valleys(Pd, res, a, b, k0, thr, djup=10.0, sida_hz=600.0, am_skydd=True):
     """Skiljer signaler som ligger tätt intill varandra (t.ex. modem med 3 kHz mellanrum):
     delar vid svackor som är minst `djup` dB under nivån på båda sidor, när det finns minst
     `sida_hz` bred signal på var sida. Behåller delen med k0. Görs inte om det finns en tydlig
@@ -654,7 +660,7 @@ def _split_valleys(Pd, res, a, b, k0, thr, djup=10.0, sida_hz=600.0):
     plat = float(np.percentile(sm, 75))
     topp = int(np.argmax(seg))
     smal = np.count_nonzero(seg > seg[topp] - 6) * res < 150
-    if smal and seg[topp] > plat + 10:
+    if am_skydd and smal and seg[topp] > plat + 10:
         return a, b                                  # bärvåg + sidband: en signal
     W = max(2, int(round(sida_hz / res)))
     snitt = []

@@ -95,6 +95,8 @@
 
 - **Bandbredd på VLF/LF och för modem.** På VLF lutar brusgolvet cirka 10 dB över fönstret, och då slogs grannstationer ihop (JXN 16,4 kHz: 8,2 kHz). Under 500 kHz tas lutningen nu bort innan bandbredden mäts, och JXN känns igen som MSK. Ett starkt, platt och fyllt band på 1,5–4 kHz (ett modem) gäller före en smal bit inuti det (STANAG FUG 10186 kHz: 680 Hz → 3,4 kHz). Smala signaler under 200 Hz, som CW och bärvågar, behåller sin bredd. Facitbiblioteket med 55 riktiga klipp: familj rätt i 52, bandbredd rätt i 42 av 53, rätt typ visas i 91 % av stegen.
 
+- **Nycklade bärvågar och tätt packade VLF-stationer får rätt bredd.** RWM:s sekundpulser har hårda nyckelklick, som mättes som AM-sidband (3,3 kHz). Nu prövas om bärvågen slås av och på. Är den nycklad mäts bredden som för CW, där toppen fallit 20 dB, i fin upplösning (RWM 9996 kHz: 67 Hz, rätt typ i 100 % av stegen mot 48 %). På VLF/LF delas stationer som bara ligger 200–500 Hz isär vid svackan mellan dem, och MSK-huvudloben beskärs till 99 % av effekten (VTX4 1,5 kHz → 240 Hz, JXN 305 Hz, DHO38 217 Hz). Facitbiblioteket med 55 klipp: familj rätt i 53, bandbredd rätt i 46 av 53, rätt typ visas i 94 % av stegen.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:
