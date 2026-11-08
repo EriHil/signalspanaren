@@ -76,6 +76,12 @@
   - Mätt med 6 dB extra brus på facitklippen: rätt typ i 49 % av stegen (förut 25 %), brus i 30 % (förut 52 %). SSB-tal blir oftast rätt, till exempel VOLMET 98 %. Rena klipp: oförändrat (98 %).
   - Live på Shannon VOLMET 5505 kHz (svag, Heby): SSB inom 1,8 s efter klick på flaggan och sedan stabilt. Förut växlade analysen mellan brus och SSB i 20 s.
 
+- **Flaggans kanal kontrolleras med en mätning.** När du klickar på en USB/LSB-flagga börjar analysen med flaggans talkanal (0,3–3 kHz från den inställda frekvensen) och mäter samtidigt bandbredden. Mätningen tar över bara när den tydligt visar något annat:
+  - en smal signal nära klicket (inom 300 Hz): under 25 % av kanalen (CW, PSK31, FT8), ett FSK-par under 45 % (RTTY), eller en smal signal med jämn nivå som fyller hela kanalen
+  - en mycket bredare signal: mer än 2,5 gånger kanalen (AM)
+
+  Talets formanter och talpauser mäts ofta smalare än talet, och då gäller kanalen. Det gäller också när inget syns. Rubriken visar "(flaggans kanal)" eller "(uppmätt)". Provat med alla facitklipp som flaggklick: bredden blir rätt i 31 av 34 (ett vanligt klick ger 26 av 34), och typen blir rätt i 97 %. Live på Shannon VOLMET (Heby) gäller flaggans kanal, och analysen visar SSB 100 %.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

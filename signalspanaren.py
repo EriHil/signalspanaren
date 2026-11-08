@@ -4585,13 +4585,14 @@ def run_gui(args):
             self.textbuf.set_text("")
             self.an.text_q.clear()
 
-        def set_target(self, f, auto_bw, fit=True):
-            """fit=False: använd bredden som den är (t.ex. demodulatorns kanal i läget Följ inställd)."""
+        def set_target(self, f, auto_bw, fit=True, flagga=False):
+            """fit=False: använd bredden som den är (t.ex. demodulatorns kanal i läget Följ inställd).
+            flagga=True: f/auto_bw är en flaggas kanal – den gäller om inte mätningen tydligt visar annat."""
             auto = fit and self.bw_dd.get_selected() == 0
             bw = self.chosen_bw(auto_bw)
             self.auto_bw = auto_bw
             forra = getattr(self, "_klar_f", None)
-            self.an.set_target(f, auto_bw if auto else bw, auto=auto)
+            self.an.set_target(f, auto_bw if auto else bw, auto=auto, flagga=flagga and auto)
             if forra is None or abs(f - forra) > max(500.0, bw / 2):
                 self._klartext_rensa()
             self._klar_f = f
@@ -4621,7 +4622,8 @@ def run_gui(args):
             if ft and ft["state"] in ("prelim", "survey"):
                 bwtxt = "<span alpha='60%'>mäter bandbredd …</span>"
             elif ft and ft.get("width"):
-                bwtxt = f"{_fmt_hz(ft['width'])} <span alpha='60%'>(uppmätt)</span>"
+                kalla = "flaggans kanal" if ft.get("bredd_fran") == "flagga" else "uppmätt"
+                bwtxt = f"{_fmt_hz(ft['width'])} <span alpha='60%'>({kalla})</span>"
             else:
                 bwtxt = _fmt_hz(tap.bw)
             self.title.set_markup(f"<b>Analys:</b> {fmt_mhz(f)} MHz  ·  {bwtxt}  "
@@ -6113,17 +6115,17 @@ def run_gui(args):
             self.tune(f, m)
             m = self.engine.mode
             # signalen i förhållande till flaggan: för USB/LSB står flaggan på den inställda frekvensen
-            mat = True
             if m in ("USB", "LSB"):
-                # flaggans kanal: talbandet 300–3000 Hz från den inställda frekvensen. Den används som den är –
-                # en bandbreddsmätning i en talpaus eller svag signal hittar annars bara en smal bit brus
-                c, g, mat = (f + 1650.0 if m == "USB" else f - 1650.0), 2700.0, False
+                # flaggans kanal: talbandet 300–3000 Hz från den inställda frekvensen. Bandbredden mäts ändå,
+                # men kanalen gäller om inte mätningen tydligt visar något annat (en smal signal, AM …) – en
+                # mätning i en talpaus eller svag signal hittar annars bara en smal bit brus
+                c, g, fl_kanal = (f + 1650.0 if m == "USB" else f - 1650.0), 2700.0, True
             else:
-                c, g = f, min(DEFAULT_BW.get(m, 3000), 12000.0 if f < 30e6 else 250e3)
+                c, g, fl_kanal = f, min(DEFAULT_BW.get(m, 3000), 12000.0 if f < 30e6 else 250e3), False
             ap = self.an_panel
             if ap.follow.get_active():
                 ap.follow_tuned()                # håll Följ inställd i takt
-            ap.set_target(c, g, fit=mat)
+            ap.set_target(c, g, fit=True, flagga=fl_kanal)
 
         def analyse(self, f, bw, show=True):
             if self.an_panel.follow.get_active():

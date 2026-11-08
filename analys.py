@@ -1591,8 +1591,10 @@ class Analyzer:
     FIT_MAX_SURVEY = 250e3
     FIT_MAX_TRIES = 3
 
-    def set_target(self, f, bw, auto=False):
-        """auto=True: bw är bara en första gissning – analysen mäter själv signalens bredd."""
+    def set_target(self, f, bw, auto=False, flagga=False):
+        """auto=True: bw är bara en första gissning – analysen mäter själv signalens bredd.
+        flagga=True (med auto): f/bw är en flaggas kanal. Den gäller tills mätningen visar något
+        tydligt annat (se _flagga_eller_matt)."""
         self.fit = None
         self.klick = float(f)                  # där användaren klickade (kanalens mitt kan flyttas)
         self._lagbaud = deque(maxlen=6)
@@ -1601,7 +1603,7 @@ class Analyzer:
             survey = float(np.clip(max(bw * 3.0, self.FIT_MIN_SURVEY), 1000.0, cap))
             # snabbt resultat med gissningen först; bandbreddsmätningen startar när det har visats
             self.fit = {"state": "prelim", "guess": float(bw), "survey": survey, "tries": 0,
-                        "cap": cap, "result": None}
+                        "cap": cap, "result": None, "flagga": (float(f), float(bw)) if flagga else None}
         self.tap.set_target(f, bw)
         self.result = None
         self.result_id += 1
@@ -1624,6 +1626,12 @@ class Analyzer:
             rp = _fsk_par(z, fs, ft["survey"])
             if rp is not None and (r is None or abs(abs(r[0] - rp[0]) - (rp[1] - 150.0) / 2) < 60.0):
                 r = rp
+        if ft.get("flagga"):
+            # även precis vid klicket (som ett vanligt klick): en smal signal där ska inte drunkna i en
+            # mätning över hela kanalen, som tar med grannsignaler
+            rc = fit_bandwidth(z, fs, ft["survey"], near_hz=200.0)
+            par = _fsk_par(z, fs, ft["survey"])
+            return self._flagga_eller_matt(ft, r, rc, par, tgt, bevis.narvaro(z, fs))
         if r is not None and r[2] and ft["survey"] < ft["cap"] and ft["tries"] < self.FIT_MAX_TRIES:
             ft["survey"] = min(ft["cap"], ft["survey"] * 3.0)      # signalen är bredare än överblicken
             self.tap.set_target(tgt, ft["survey"])
@@ -1642,6 +1650,46 @@ class Analyzer:
             log.info("Signalanalys: uppmätt bandbredd %.0f Hz (kanal %.0f Hz, mitt %+.0f Hz)", width, new_bw, mid)
         ft.update(state="klar", result=r, width=(r[1] if r else None))
         self.tap.set_target(new_f, new_bw)
+        return True
+
+    def _flagga_eller_matt(self, ft, r, rc, par, tgt, narv=None):
+        """Flaggans kanal mot mätningen. Mätningen vinner bara när den tydligt visar något annat:
+          • en smal signal: under 25 % av kanalen (CW, PSK31, FT8), eller under 45 % när det är ett tydligt
+            FSK-par (RTTY, 450–850 Hz shift) eller när mätningen över kanalen inte blir bredare än vid klicket
+          • en mycket bredare signal: över 2,5 gånger kanalen (AM ≈ 3,7 gånger; SSB-tal med grannsignaler
+            mäts ibland till 2 gånger)
+        Tal mäts ofta till en formant eller en bit av bandet (0,9–2,7 kHz) – då, och när inget syns, gäller
+        flaggans kanal. r = mätning över kanalen, rc = mätning vid klicket, par = FSK-par vid klicket."""
+        fc, fw = ft["flagga"]
+        val = None
+        for kand in (par, rc, r):
+            if kand is None:
+                continue
+            if abs(tgt + kand[0] - fc) > 300.0:
+                continue            # en smal topp någonstans i kanalen (bärvåg, störning) är inte flaggans signal
+            if kand[1] < 0.25 * fw or (kand is par and kand[1] < 0.45 * fw):
+                val = kand
+                break
+            if kand is rc and kand[1] < 0.45 * fw and r is not None and r[1] <= 1.3 * kand[1] \
+                    and narv is not None and narv < 1.8:
+                # hela kanalen innehåller bara den smala signalen, och nivån är jämn (RTTY ≈ 1,3) – inte en
+                # talpaus, där bara en formant syns (tal varierar i nivå: 2,5 och mer)
+                val = kand
+                break
+        if val is None and r is not None and r[1] > 2.5 * fw:
+            val = r
+        if val is not None:
+            mid, width = tgt + val[0], val[1]
+            new_bw = float(np.clip(max(width * 1.25, width + 150.0), 300.0, ft["cap"]))
+            log.info("Signalanalys: flaggans kanal %.0f Hz stämmer inte – uppmätt %.0f Hz (mitt %+.0f Hz)",
+                     fw, width, mid - fc)
+            ft.update(state="klar", result=val, width=width)
+            self.tap.set_target(mid, new_bw)
+        else:
+            log.info("Signalanalys: flaggans kanal %.0f Hz gäller (uppmätt %s)", fw,
+                     "ingenting" if r is None else f"{r[1]:.0f} Hz")
+            ft.update(state="klar", result=(fc - tgt, fw, False), width=fw, bredd_fran="flagga")
+            self.tap.set_target(fc, fw)
         return True
 
     def _reset_lock(self):
