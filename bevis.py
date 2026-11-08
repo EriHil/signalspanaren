@@ -199,7 +199,8 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None, sedd=False):
     cf0 = feat.get("barvag_andel") or 0.0
     # en bärvåg vars nivå varierar (närvaro) är modulerad: när sidbanden drunknar i bruset syns bara
     # bärvågen, och den uppmätta bredden säger då inget om AM
-    modbarvag = cf0 >= 0.5 and narv is not None and narv >= 1.5 and not feat.get("skurar")
+    modbarvag = (cf0 >= 0.5 and narv is not None and narv >= 1.5 and not feat.get("skurar")
+                 and not feat.get("nycklad"))
     if feat.get("occ_bw") and (feat.get("skurar") or raw in ("OOK", "BÄRVÅG")):
         w = min(w, feat["occ_bw"])          # nyckelklick gör kanalens uppmätta bredd för stor
     for h in HYP:
@@ -224,6 +225,11 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None, sedd=False):
         ge(["AM", "FM", "BÄRVÅG"], "på/av", -0.5)
     # 4. bärvåg
     cf = cf0
+    # en PSK- eller FSK-signal med sändningspauser (PSK31 mellan överföringarna) slås också av och på –
+    # nycklingen räknas bara när steget självt inte mäter fas- eller frekvensmodulering
+    if feat.get("nycklad") and raw not in DIGITAL:
+        ge(["OOK"], "nycklad bärvåg", 1.5)
+        ge(["AM", "BÄRVÅG", "FM"], "nycklad bärvåg", -1.5)
     if modbarvag:
         ge(["BÄRVÅG"], "bärvågen varierar", -1.5)
         ge(["AM"], "bärvågen varierar", 0.8)

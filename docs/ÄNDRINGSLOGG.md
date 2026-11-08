@@ -99,6 +99,8 @@
 
 - **RTTY får rätt bredd.** Starka FSK-signaler mättes med tonernas kjolar (DWD 10100,8 kHz: 1,1–1,2 kHz). Beskärningen till 99 % av effekten hoppades över så fort en topp bar 30 % av effekten, för att skydda AM-bärvågar. En AM-bärvåg bär 70–95 %, en av två FSK-toner cirka 45 %, och gränsen är nu 60 %. DWD: 562 Hz. Facitbiblioteket: bandbredd rätt i 48 av 53.
 
+- **Nycklade bärvågar känns igen över 3 s.** RWM:s sekundpulser syns sällan inom ett analyssteg på 0,4 s. Bärvågens varierande nivå gav då stöd för AM (RWM 14996 kHz: rätt typ i 24 % av stegen). Nu prövar motorn om bärvågen slås av och på i 50 ms-rutor över 3 s. Det ger starkt stöd för OOK, utom när steget självt mäter PSK eller FSK, eftersom PSK31 också har sändningspauser, eller när FSK nyss mätts, eftersom en fädad FSK-ton ser ut som en ensam bärvåg. RWM 14996 kHz: 100 %. DCF77-facit godtar också BPSK, eftersom pseudoslumpkoden är binär fasmodulering. Facitbiblioteket: rätt typ i 97 % av stegen.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

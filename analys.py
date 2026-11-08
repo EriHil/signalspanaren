@@ -2051,6 +2051,13 @@ class Analyzer:
             if m is not None:
                 self._tal = m if self._tal is None else 0.6 * self._tal + 0.4 * m
             narv = bevis.narvaro(snap[0], snap[1], self.tap.bw)
+            # nycklad bärvåg över 3 s (RWM:s sekundpulser syns sällan inom ett steg på 0,4 s)
+            # 50 ms-rutor: PSK31:s korta amplituddippar (var 32:a ms) och FSK-tonernas växlingar är ingen
+            # nyckling – bärvågen ska vara av i längre stunder och bära minst halva effekten
+            # (inte heller när FSK nyss mätts: en fädad FSK-ton ser ut som en ensam nycklad bärvåg)
+            if (feat.get("barvag_andel") or 0.0) >= 0.5 and not feat.get("shift") \
+                    and not getattr(self, "_fsk_mem", None):
+                feat["nycklad"] = _nycklad(snap[0], snap[1], float(feat.get("f_mid") or 0.0), ruta_s=0.05)
             # modemram över 3 s (STANAG 4285: 106,7 ms) – syns i brus där ett steg på 0,4 s inte räcker.
             # Bara ≥ 50 ms: talets grundton ger skenbara perioder på 20–35 ms
             if (self.tap.bw or 0) >= 1500:
