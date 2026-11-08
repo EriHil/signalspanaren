@@ -278,7 +278,7 @@ def _smooth(x, n):
     return uniform_filter1d(x, n, mode="nearest") if n > 1 else x
 
 
-def fit_bandwidth(z, fs, survey_bw, near_hz=300.0):
+def fit_bandwidth(z, fs, survey_bw, near_hz=300.0, lutning=False):
     """Mäter hur långt signalen nära mitten sträcker sig ovanför brusgolvet.
 
     Kanten bestäms mot brusgolvet, inte mot toppen: AM-sidband som ligger 30–40 dB under
@@ -292,13 +292,13 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0):
     grov = int(np.clip(_pow2(fs / max(survey_bw / 400.0, 1.0)), 256, 16384))
     while grov > 256 and N // grov < 8:          # minst 8 medelvärden – annars är brusgolvet för brusigt
         grov //= 2
-    r = _fit_res(z, fs, survey_bw, near_hz, grov)
+    r = _fit_res(z, fs, survey_bw, near_hz, grov, lutning=lutning)
     fin = grov
     while fin * 2 <= 16384 and N // (fin * 2) >= 8:
         fin *= 2
     # smal signal (t.ex. en nycklad bärvåg) syns inte i grov upplösning: försök igen finare
     if fin > grov and (r is None or r[1] < 12 * fs / grov):
-        r2 = _fit_res(z, fs, survey_bw, near_hz, fin)
+        r2 = _fit_res(z, fs, survey_bw, near_hz, fin, lutning=lutning)
         if r2 is not None and r2[1] >= 2.5 * fs / fin:
             r = r2
     # svag smal signal (CW, nycklad bärvåg) precis under tröskeln: alla upplösningar däremellan, med något
@@ -306,12 +306,12 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0):
     if r is None:
         mel = grov
         while mel <= fin and r is None:
-            r2 = _fit_res(z, fs, survey_bw, near_hz, mel, slapp=True)
+            r2 = _fit_res(z, fs, survey_bw, near_hz, mel, slapp=True, lutning=lutning)
             if r2 is not None and r2[1] >= 2.5 * fs / mel and r2[1] < 600.0:
                 r = r2
             mel *= 2
     # svag bred signal (tal, modem, AM-sidband nära bruset): syns bara när spektrumet slätas ut
-    rs = _fit_slat(z, fs, survey_bw, near_hz, None if r is None else r[0])
+    rs = _fit_slat(z, fs, survey_bw, near_hz, None if r is None else r[0], lutning=lutning)
     if rs is not None and rs[4] < 4.0 and rs[5] < 6.0:
         # bara när bandet är svagt (under 4 dB över bruset): annars drar det utslätade bandet med sig
         # grannsignaler (och ett klick mellan två FSK-toner ska till _fsk_par), och den vanliga mätningen
@@ -327,7 +327,7 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0):
     return r
 
 
-def _fit_slat(z, fs, survey_bw, near_hz, kring=None, slat_hz=300.0):
+def _fit_slat(z, fs, survey_bw, near_hz, kring=None, slat_hz=300.0, lutning=False):
     """Bandbreddsmätning på ett utslätat spektrum (medel över slat_hz). Brusets spridning minskar med
     roten ur antalet punkter, så ett brett band som bara ligger 1–2 dB över bruset (svagt SSB-tal,
     STANAG 4285, AM-sidband) syns. Returnerar (mitt, bredd, når_kanten, spegel kring 'kring',
@@ -341,6 +341,8 @@ def _fit_slat(z, fs, survey_bw, near_hz, kring=None, slat_hz=300.0):
     sel = np.abs(f) <= survey_bw / 2
     f, P = f[sel], P[sel]
     res = fs / nfft
+    if lutning:
+        P = _utan_lutning(f, P)
     K = max(3, int(round(slat_hz / res)))
     if len(f) < 4 * K:
         return None
@@ -446,7 +448,28 @@ def _vaxlar(z, fs, nfft, f1, f2):
     return float(np.corrcoef(p1, p2)[0, 1]) < -0.2
 
 
-def _fit_res(z, fs, survey_bw, near_hz, nfft, slapp=False):
+def _utan_lutning(f, P):
+    """Tar bort en lutning i brusgolvet (VLF: ~10 dB över fönstret). Annars ligger hela den höga sidan
+    över ett golv som mätts i den låga, och grannsignaler slås ihop. En rak linje anpassas till de
+    lägsta punkterna (bruset) i fönstrets inre 80 % – breda signaler (AM) påverkas inte, platta spektrum
+    lämnas orörda (under 3 dB lutning)."""
+    n = len(f)
+    if n < 32:
+        return P
+    Pd = 10 * np.log10(P + 1e-30)
+    inre = slice(n // 10, n - n // 10)
+    fi, pi = f[inre], Pd[inre]
+    lag = pi <= np.percentile(pi, 30)
+    if lag.sum() < 8:
+        return P
+    k, m = np.polyfit(fi[lag], pi[lag], 1)
+    if abs(k) * (fi[-1] - fi[0]) < 3.0:
+        return P
+    trend = k * (f - f[n // 2])
+    return P / 10 ** (trend / 10)
+
+
+def _fit_res(z, fs, survey_bw, near_hz, nfft, slapp=False, lutning=False):
     N = len(z)
     f, P = _welch(z, fs, nfft)
     sel = np.abs(f) <= survey_bw / 2
@@ -454,6 +477,8 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft, slapp=False):
     if len(f) < 16:
         return None
     res = fs / nfft
+    if lutning:
+        P = _utan_lutning(f, P)
     Pd = 10 * np.log10(P + 1e-30)
     # Brusgolvet ur de lägsta 10 %: håller så länge minst en tiondel av överblicken är brus.
     # Spridningen i dB för ett medelvärde av m periodogram är ungefär 5,6/√m (teori, inte uppmätt –
@@ -1708,7 +1733,8 @@ class Analyzer:
             return True
         z = snap[0]
         ft["tries"] += 1
-        r = fit_bandwidth(z, fs, ft["survey"], near_hz=max(200.0, ft["guess"] * 0.5))
+        lf = tgt < 500e3          # VLF/LF: brusgolvet lutar kraftigt (atmosfäriskt brus faller med frekvensen)
+        r = fit_bandwidth(z, fs, ft["survey"], near_hz=max(200.0, ft["guess"] * 0.5), lutning=lf)
         if r is None or r[1] < 150.0:
             # klick mellan FSK-tonerna (shift upp till ca 1,2 kHz): bandbreddsmätningen delar vid svackan
             # mellan tonerna och ser ingen signal vid klicket – eller hittar bara den ena tonen (svag RTTY)
@@ -1720,7 +1746,7 @@ class Analyzer:
         if ft.get("flagga"):
             # även precis vid klicket (som ett vanligt klick): en smal signal där ska inte drunkna i en
             # mätning över hela kanalen, som tar med grannsignaler
-            rc = fit_bandwidth(z, fs, ft["survey"], near_hz=200.0)
+            rc = fit_bandwidth(z, fs, ft["survey"], near_hz=200.0, lutning=lf)
             par = _fsk_par(z, fs, ft["survey"])
             return self._flagga_eller_matt(ft, r, rc, par, tgt, bevis.narvaro(z, fs))
         if r is not None and r[2] and ft["survey"] < ft["cap"] and ft["tries"] < self.FIT_MAX_TRIES:
