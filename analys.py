@@ -981,6 +981,12 @@ def analyze(z, fs, bw):
         fb_m, sb_m = _line(tr.astype(np.float64), fs, 0.95 * msk, min(1.05 * msk, fs / 2.2))
         if not (fb_m and sb_m >= 15):
             msk = None
+    if msk and nlev >= 2 and len(tones) >= 2:
+        # den verkliga symboltakten ur tonernas omslag: MSK byter ton varje symbol (VLF: 200 Bd = linje-
+        # avståndet), RTTY 50 Bd med 450 Hz shift har linjeavståndet 900 Hz men byter bara 50 gånger/s
+        fb_t = _fsk_baud(fi_v, fs, tones)
+        if fb_t and abs(fb_t / msk - 1.0) > 0.2:
+            msk = None
     if msk:
         psk = None
         out["baud"], out["baud_styrka"] = msk, 30.0

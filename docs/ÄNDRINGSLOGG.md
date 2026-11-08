@@ -105,6 +105,8 @@
 
 - **Nycklad bärvåg och fädande AM skiljs åt.** Testet för nyckling medelvärdesbildar bärvågen över 50 ms. Med en bärvågsfrekvens som låg några Hz fel roterade fasen inom rutan, och då såg en fädande AM-bärvåg nycklad ut. Bärvågen skattas nu exakt ur 3 s (0,3 Hz). Som nycklad räknas en bärvåg bara om av-läget når ned till bruset, jämfört med samma filter 150 Hz bredvid, vilket fädning sällan gör. En bärvåg som ibland faller ned till bruset ger lite stöd för OOK. Att bärvågens nivå varierar ger stöd för AM bara i rundradioband. Annars säger det bara att bärvågen inte är omodulerad, eftersom RWM utan synliga sidband ser likadan ut som svag AM. Facitbiblioteket: rätt typ i 98 % av stegen. Med 6 dB extra brus: 73 % (förut 70 %).
 
+- **Rättat: syntetisk RTTY klassades som MSK i självtestet.** För vilken 2-FSK som helst ligger linjeparet i z² på dubbla shiften (RTTY 450 Hz: 900 Hz). MSK godtas nu bara om tonernas omslagstakt, alltså den verkliga symboltakten, stämmer med linjeavståndet. VLF-stationerna har 200 Bd och klarar det, RTTY 50 Bd gör det inte. Självtestet går igenom igen.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:
