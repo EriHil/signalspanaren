@@ -14,7 +14,7 @@
 - [ ] **AI-sök efter tjänst eller signaltyp.** Be AI:n hitta till exempel VOLMET eller STANAG 4285. Sorteringen följer KiwiSDR-flaggornas typer. Frekvenserna verifieras med analysen, flaggorna är bara en lista. Träffen visas i vattenfallet och spelas upp. Om sökordet bara är en modulation, till exempel FSK, visas i stället de signaltyper som använder den.
 - [ ] **AI-chatten: kortare svar.** Gratis-AI:n skriver långa svar och ibland påhittade detaljer. Prompten behöver skärpas.
 
-## 2.12.1 (2026-11-07, ej släppt)
+## 2.12.1 (2026-11-08)
 
 - **Byt AI-modell i chatten.** Under chattens text finns en modellväljare med Gratis (Pollinations), Groq (`openai/gpt-oss-20b` och `120b`), Gemini (Flash och Flash-Lite) och Claude. Valet sparas direkt. Groq och Gemini har gratisnivåer med egen API-nyckel, som läggs in under Inställningar för AI. Varje leverantör behåller sin nyckel. Analysdata skickas till leverantören du väljer, och texten under modellvalet säger vilken. Fel från tjänsten visar när du kan försöka igen.
 - **Rättat: krasch i signalanalysens spektrum** (`KeyError: 'f_lo'`). Vissa klassningar satte signalens bredd utan kantfrekvenser, bland annat linjära modem som STANAG 4539 och FT8/FT4-detektorn. Ritningen förutsatte att kanterna fanns och kraschade vid varje omritning. Nu sätts kanterna alltid, och ritningen räknar ut dem från mitt och bredd om de ändå saknas. Upptäckt på Shannon VOLMET 5505 kHz, där analysen ibland gissade STANAG 4539.
