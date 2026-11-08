@@ -600,9 +600,9 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft, slapp=False, lutning=False):
     # 99 % av effekten (över bruset) inom signalen: en stark signals svaga kjolar (fasbrus, AGC) ligger
     # långt över brusgolvet men bär nästan ingen effekt – de ska inte räknas in i bredden
     ex = np.maximum(P[a:b + 1] - 10 ** (floor / 10), 0.0)
-    # inte när en bärvåg bär effekten (AM) – utom på VLF/LF, där riktig AM redan tagits ovan och en smal
-    # MSK-huvudlob (~240 Hz) annars ser ut som en bärvåg i grov upplösning
-    if ex.sum() > 0 and b - a >= 4 and (andel < 0.3 or lutning):
+    # inte när en bärvåg bär effekten (AM: 70–95 %) – en av två FSK-toner bär ~45 %, och då ska kjolarna
+    # bort. På VLF/LF är riktig AM redan tagen ovan, och en smal MSK-huvudlob ser ut som en bärvåg.
+    if ex.sum() > 0 and b - a >= 4 and (andel < 0.6 or lutning):
         cs = np.cumsum(ex) / ex.sum()
         a, b = a + int(np.searchsorted(cs, 0.005)), a + int(np.searchsorted(cs, 0.995))
     lo, hi = float(f[a]) - res / 2, float(f[b]) + res / 2

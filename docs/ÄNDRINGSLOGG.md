@@ -97,6 +97,8 @@
 
 - **Nycklade bärvågar och tätt packade VLF-stationer får rätt bredd.** RWM:s sekundpulser har hårda nyckelklick, som mättes som AM-sidband (3,3 kHz). Nu prövas om bärvågen slås av och på. Är den nycklad mäts bredden som för CW, där toppen fallit 20 dB, i fin upplösning (RWM 9996 kHz: 67 Hz, rätt typ i 100 % av stegen mot 48 %). På VLF/LF delas stationer som bara ligger 200–500 Hz isär vid svackan mellan dem, och MSK-huvudloben beskärs till 99 % av effekten (VTX4 1,5 kHz → 240 Hz, JXN 305 Hz, DHO38 217 Hz). Facitbiblioteket med 55 klipp: familj rätt i 53, bandbredd rätt i 46 av 53, rätt typ visas i 94 % av stegen.
 
+- **RTTY får rätt bredd.** Starka FSK-signaler mättes med tonernas kjolar (DWD 10100,8 kHz: 1,1–1,2 kHz). Beskärningen till 99 % av effekten hoppades över så fort en topp bar 30 % av effekten, för att skydda AM-bärvågar. En AM-bärvåg bär 70–95 %, en av två FSK-toner cirka 45 %, och gränsen är nu 60 %. DWD: 562 Hz. Facitbiblioteket: bandbredd rätt i 48 av 53.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:
