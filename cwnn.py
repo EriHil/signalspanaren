@@ -15,6 +15,22 @@ Träningsdata kommer från cwgenerator.slumpat() (känt facit). Kräver tensorfl
   python3 cwnn.py crnn --antal 6000 --epoker 12
   python3 cwnn.py cnn
   python3 cwnn.py lstm
+
+Resultat 2026-11-08 (teckenfel; 16 generatorscenarier à 2×40 s, riktig 40 m-QSO):
+                         Signalspanaren   CRNN    CNN
+  medel scenarier              8,3 %      17,5 %  13,1 %
+  fladder (fav22)             10,5 %       3,8 %   2,6 %
+  tätt band                   24,3 %       2,3 %   1,0 %
+  åskknaster                   7,5 %       2,1 %   1,1 %
+  svag signal                 23,8 %      45,4 %  26,4 %
+  station 6–40 Hz bort       0,6–1,2 %    66–68 %  52–53 %
+  riktig 40 m-QSO              2,4 %       5,3 %   7,7 %
+  riktig FAV22, likhet fldigi 52,5 %      55,9 %  55,9 %
+  LSTM på pulsföljder: 89,6 % rätt klass mot reglernas 87,5 % (Random Forest 88,7 %).
+Så tränades de: CTC fastnar på bara blanktecken utan hög inlärningstakt (3e-3) och
+gradientklippning; nätet måste få variation (eko, AGC, läckande bärvåg, nära grannar)
+för att klara riktiga klipp; CRNN tränades först på ren data och sedan vidare med
+variation (--fran), CNN startade från CRNN:s faltningslager.
 """
 import argparse
 import difflib
