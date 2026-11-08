@@ -135,3 +135,39 @@ cd /opt/ggmorse-src && g++ -O2 -std=c++17 -Iinclude -Isrc -Iexamples src/*.cpp \
 - Träna om med `cwtrana.py` när riktiga klipp finns.
 - Bestäm om `IMG_0934.mov` (23 MB) ska tas bort ur repot. Ljudet finns i `testdata/cw/`.
 - Prova CW-bandet i simulatorn i det grafiska programmet. Det är testat utanför GUI:t.
+
+---
+
+## 2026-11-08 (forts.) – genomgång: har allt som föreslogs provats?
+
+### Gjort i det här passet
+- **Simulatorns CW-band provat i det grafiska programmet** (Xvfb, GTK4). Första försöket
+  misslyckades: analysen tog bandet för en bred AM-signal (19–60 kHz) och Morse-avkodaren
+  startade aldrig. Orsaker: generatorns brus och åskknaster täckte hela simulatorslingans
+  48 kHz, och stationerna låg för tätt. Rättat (inget eget brus, stationer 3 kHz isär).
+  Nu: På/av-nyckling 100 %, 32 Hz, 24 ord/min, träningsgrupperna avkodas (78 % mot facit).
+- **Maskininlärning provad (`cwml.py`)**: klassning av avkodarens ton- och pauslängder
+  (7 klasser, känd nyckling från generatorn, 80 klipp träning och 40 test).
+  k-means-regler 87,5 %, Random Forest 88,7 %, SVM 88,7 %, MLP 88,7 %.
+  Klassningen är inte flaskhalsen. Störningar (61 %) och avbrott (~31 %) uppstår i
+  signalbehandlingen och kan inte rättas av någon klassare.
+
+### Checklista mot förslagen
+
+| Förslag | Status |
+|---|---|
+| Ansluta till repot | Gjort |
+| Regelbaserad segmentering (1/3, 1/3/7) | Gjort, med adaptiva gränser (k-means) i stället för fasta |
+| Random Forest / SVM på tidsavstånd | Provat (`cwml.py`): +1,2 procentenheter, inte infört |
+| RNN/LSTM/Transformer på pulsföljder | Delvis: ett MLP (neuralt nät) på samma särdrag. LSTM inte provat (PyTorch går inte att installera här) |
+| Spektrogram/MFCC + CNN | Inte provat (PyTorch saknas). Avkodaren använder envelop, inte spektrogram |
+| Lyssna på FAV22 3881/6825 kHz | Inte möjligt från molnet (KiwiSDR port 8073 blockeras); användarens inspelning analyserad |
+| Kända CW-avkodare som jämförelse | fldigi och ggmorse (lokalt). Webbaserade avkodare (t.ex. morsecode.world) inte provade, de kräver webbläsare och mikrofon |
+| Träna | Gjort: cwtrana.py, analystest.py morse, generatorscenarier, riktiga klipp |
+| Bygga/installera modulerna | fldigi och ggmorse. morse-audio-decoder (pip) fanns inte för Python 3.13 |
+| Träningsgrupper | Gjort (`CwGruppAvkodare`) |
+| CW-generator i programmet | Gjort, nu även provad i GUI:t |
+| Överlappande signaler, olika sändningar | Gjort (vaxel, nat, overlapp, nollstampel, pileup, blandat) |
+| Logg på GitHub utanför koden | Gjort (den här grenen) |
+| Miljö med uppstartsskript | Skapad ("signalspanaren"), ännu inte prövad i en ny session |
+| Ta bort IMG_0934.mov ur repot | Väntar på besked |
