@@ -121,27 +121,28 @@ def modell(lstm=True):
     L = tf.keras.layers
     inp = L.Input((None, BINS))
     x = L.Conv1D(64, 5, padding="same", activation="relu")(inp)
-    x = L.BatchNormalization()(x)
+    x = L.LayerNormalization()(x)
     x = L.Conv1D(64, 5, padding="same", activation="relu")(x)
     x = L.MaxPooling1D(2)(x)                                   # 10 ms
-    x = L.BatchNormalization()(x)
+    x = L.LayerNormalization()(x)
     x = L.Conv1D(96, 5, padding="same", activation="relu")(x)
     x = L.MaxPooling1D(2)(x)                                   # 20 ms per steg (prick i 40 ord/min = 30 ms)
-    x = L.BatchNormalization()(x)
+    x = L.LayerNormalization()(x)
     if lstm:
         x = L.Bidirectional(L.LSTM(64, return_sequences=True))(x)
         x = L.Bidirectional(L.LSTM(64, return_sequences=True))(x)
     else:
         for d in (2, 4, 8, 16):                                # vidgade faltningar ger sammanhang
             x = L.Conv1D(96, 3, padding="same", dilation_rate=d, activation="relu")(x)
-            x = L.BatchNormalization()(x)
+            x = L.LayerNormalization()(x)
     out = L.Dense(len(ALFABET) + 1)(x)                         # sista = CTC-blank
     return tf.keras.Model(inp, out)
 
 
 def trana_ctc(m, X, Y, epoker, Xv, Yv):
     import tensorflow as tf
-    opt = tf.keras.optimizers.Adam(1e-3)
+    # hög inlärningstakt + gradientklippning behövs för att komma förbi CTC:s platå (bara blanktecken)
+    opt = tf.keras.optimizers.Adam(3e-3, clipnorm=5.0)
     B = 32
     rng = np.random.default_rng(0)
 
@@ -176,6 +177,8 @@ def trana_ctc(m, X, Y, epoker, Xv, Yv):
         cer = np.mean([fel(ALFABET_text(Yv[i]), avkoda_nn(m, Xv[i])) for i in range(min(150, len(Xv)))])
         print(f"  epok {ep + 1}: förlust {np.mean(ls):.3f}, teckenfel (validering) {cer * 100:.1f} %", flush=True)
         if ep == epoker // 2:
+            opt.learning_rate.assign(1e-3)
+        elif ep == (3 * epoker) // 4:
             opt.learning_rate.assign(3e-4)
 
 
