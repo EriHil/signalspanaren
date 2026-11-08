@@ -68,6 +68,8 @@
   - Följ inställd och `--analysera` använder aldrig en kanal bredare än 15 kHz under 30 MHz. I stället mäter analysen signalen.
   - Provat live mot Heby: Shannon VOLMET 5505 kHz från WFM-läge ger USB och SSB 100 %, med grunden "mätning; flygband; flagga VOLMET".
 
+- **Signaltyp-rutan säger aldrig emot rubriken.** Rutan till höger låste en typ ur signaldatabasen utan att jämföra den med analysens signalfamilj. Den kunde till exempel visa "SSB-tal 100 %" medan rubriken sa "Osäker – kanske 4-FSK". Nu låses bara en typ vars modulation passar den familj bevismotorn visar. Om motorn byter till en familj som inte passar släpper rutan typen och söker igen. Din egen klassning och typer du har valt i rullistan ändras inte. Provat live på Shannon VOLMET 5505 kHz (svag): rutan stod på "söker" medan analysen visade brus och låste SSB-tal först när analysen visade SSB.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

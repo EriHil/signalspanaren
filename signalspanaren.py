@@ -4909,9 +4909,25 @@ def run_gui(args):
             Sedan ändras rutan bara av dig (rullistan eller Redigera)."""
             esc = GLib.markup_escape_text
             shown = getattr(self, "_kand_shown", None)
+            # Rutan ska aldrig säga emot rubriken: en typ ur databasen gäller bara om dess modulation
+            # (signaldb "mod") rymmer den familj bevismotorn visar.
+            vfam = self._efam(r) if r else None
+            vfam = {"FT8": "MFSK", "FT4": "FSK4"}.get(vfam, vfam)
+
+            def passar(e):
+                if not self.an.ny_motor:
+                    return True
+                return vfam not in (None, "VÄNTAR", "BRUS", "OKÄND") and vfam in ((e or {}).get("mod") or [])
+
+            if shown is not None and shown.get("kalla") == "analys" and vfam not in (None, "VÄNTAR") \
+                    and not passar(shown["e"]):
+                shown = self._kand_shown = None          # motorn har bytt familj: börja om
+                self._kand_hist.clear()
             if shown is None and r and self._efam(r) not in (None, "BRUS"):
                 hist = self._kand_hist
                 lock = r.get("kandidat") if r.get("kandidat_las") else None
+                if lock is not None and not passar(lock[1]):
+                    lock = None
                 hist.append((lock[1].get("namn"), lock) if lock is not None else None)
                 del hist[:-40]
                 rader = [x for x in hist if x]
