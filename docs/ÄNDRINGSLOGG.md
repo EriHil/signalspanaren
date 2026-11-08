@@ -60,6 +60,14 @@
   - Mätt med analystest: rätt typ visas i 98 % av stegen (förut 91 %), och visningen byter hälften så ofta (58 byten mot 116 på 46 klipp). Den gamla motorn kan väljas med `"analys_motor": "gammal"` i inställningsfilen.
 - **Rättat: klick på en KiwiSDR-flagga behöll fel läge.** Kiwins lägen (CWN, NBFM, AMN, USN, LSN, SAM …) kändes inte igen, så läget du hade stod kvar, till exempel WFM. Nu översätts de till CW, NFM, AM, USB och LSB.
 
+- **Flaggor från en referens-Kiwi.** Flaggorna hämtas nu också från Kiwin hos aprs.fi i Kuopio, oavsett vilken mottagare du lyssnar på (SK3JR, dongeln eller en annan Kiwi). Den Kiwin har KiwiSDR:s fullständiga flagglista med 866 flaggor. Kontrollerad mot 69 stationer med kända frekvenser (VOLMET, MWARA, NAVTEX, DWD, Northwood, tidssignaler och fyrar): 66 av 69 har en flagga. SK3JR har 11 av 69, och Shannon VOLMET 5505 kHz saknas där. Listan hämtas i bakgrunden en gång i veckan och sparas lokalt. Hämtningen tar ungefär 4 s och stör inte ljudet, eftersom det är en annan Kiwi. Referensens flaggor visas där varken du eller mottagarens Kiwi redan har en flagga. De kan döljas eller ändras som andra flaggor. Brytaren **Flaggor från referens-Kiwi** finns i sektionen Flaggor. Analysen använder flaggorna som stöd. Flaggans namn, typ och anteckning läses, så DWD:s väder-RTTY (DDH7, typ FSK) ger stöd för FSK.
+
+- **Rättat: analysen följde fel bandbredd efter klick på en flagga.** Analysen tog demodulatorns kanal rakt av, och med ett kvarglömt WFM-läge blev den 180 kHz bred på kortvåg. Nu gäller följande:
+  - Ett klick på en flagga riktar analysen mot själva signalen. För USB/LSB används flaggans talkanal (0,3–3 kHz från den inställda frekvensen). För andra lägen mäts bandbredden.
+  - Om flaggans läge är okänt och frekvensen ligger under 30 MHz blir läget USB eller LSB efter bandet, aldrig WFM eller NFM.
+  - Följ inställd och `--analysera` använder aldrig en kanal bredare än 15 kHz under 30 MHz. I stället mäter analysen signalen.
+  - Provat live mot Heby: Shannon VOLMET 5505 kHz från WFM-läge ger USB och SSB 100 %, med grunden "mätning; flygband; flagga VOLMET".
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

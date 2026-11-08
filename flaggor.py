@@ -35,6 +35,12 @@ _KIWI_TYP = {"aero": "Flyg", "volmet": "Flyg", "hfdl": "HFDL", "milcom": "Milit�
              "ham": "Amatör", "voice": "Tal", "digital": "Data", "fsk": "Data", "utility": "Data", "cw": "Amatör",
              "beacon": "Fyr/bake", "beacons": "Fyr/bake", "dgps": "Fyr/bake"}
 CACHE_TID = 24 * 3600
+# Referens-Kiwi: flaggorna hämtas härifrån oavsett mottagare. Kiwin hos aprs.fi i Kuopio (8 platser) har
+# KiwiSDR:s fullständiga flagglista (866 st, kategoriserade). Kontrollerad 2026-11-08 mot 69 stationer med
+# kända frekvenser (VOLMET, MWARA, NAVTEX, DWD, Northwood, tidssignaler, fyrar): 66 av 69 har flagga.
+# SK3JR: 11 av 69. Användarens val.
+REFERENS = "http://kiwi-kuo.aprs.fi:8073"
+REF_CACHE_TID = 7 * 24 * 3600      # listan ändras sällan
 
 
 def typ_for(flagga):
@@ -81,6 +87,8 @@ class Flaggor:
         self.egna = []
         self.kiwi = {}           # kiwi-nyckel (norm_url) -> lista
         self.kiwi_aktiv = None   # nyckel för den Kiwi som är källa just nu
+        self.ref = None          # nyckel för referens-Kiwin (flaggor oavsett mottagare)
+        self.ref_addr = None
         self.status = ""
         self._lock = threading.Lock()
         self._hamtar = set()
@@ -167,11 +175,32 @@ class Flaggor:
         if hamta and (alder is None or alder > CACHE_TID):
             self.hamta(nyckel, addr)
 
+    def satt_referens(self, nyckel, addr):
+        """Referens-Kiwin (None = av). Läser cachen och hämtar i bakgrunden om den saknas eller är äldre än en
+        vecka. Hämtningen går mot en annan Kiwi än den du lyssnar på, så den stör inte ljudet."""
+        self.ref, self.ref_addr = nyckel, addr
+        if nyckel is None:
+            self._andrat()
+            return
+        alder = None
+        try:
+            with open(self._cachefil(nyckel), encoding="utf-8") as fh:
+                d = json.load(fh)
+            with self._lock:
+                self.kiwi[nyckel] = d.get("flaggor", [])
+            alder = time.time() - float(d.get("tid", 0))
+        except (OSError, ValueError):
+            pass
+        self._andrat()
+        if alder is None or alder > REF_CACHE_TID:
+            self.hamta(nyckel, addr)
+
     def hamta(self, nyckel, addr):
-        """Hämtar Kiwins flaggor, men aldrig medan ljudet är uppkopplat. Då väntar hämtningen till stoppet."""
+        """Hämtar Kiwins flaggor, men aldrig medan ljudet från samma Kiwi är uppkopplat. Då väntar hämtningen
+        till stoppet."""
         if nyckel in self._hamtar:
             return True
-        if self.kiwi_upptagen and self.kiwi_upptagen():
+        if nyckel == self.kiwi_aktiv and self.kiwi_upptagen and self.kiwi_upptagen():
             self.vantar_pa_stopp = (nyckel, addr)
             self.status = "hämtas när lyssningen stoppas"
             self._andrat()
@@ -224,7 +253,7 @@ class Flaggor:
             os.makedirs(self.cache_dir, exist_ok=True)
             with open(self._cachefil(nyckel), "w", encoding="utf-8") as fh:
                 json.dump({"tid": time.time(), "addr": addr, "flaggor": lst}, fh, ensure_ascii=False)
-            self.status = f"{len(lst)} flaggor från Kiwin"
+            self.status = f"{len(lst)} flaggor från " + ("referens-Kiwin" if nyckel == self.ref else "Kiwin")
         except Exception as ex:
             log.warning("Kunde inte hämta Kiwins flaggor (%s): %s", addr, ex)
             self.status = f"kunde inte hämta Kiwins flaggor: {ex}"
@@ -255,6 +284,17 @@ class Flaggor:
             for x in lst:
                 if lo_hz <= x["f"] <= hi_hz and kiwi_nyckel(x) not in ersatta and sander_nu(x, hhmm):
                     ut.append(dict(x, _egen=False))
+        if self.ref and self.ref != (self.kiwi_aktiv if visa_kiwi else None):
+            # referens-Kiwins flaggor där varken du eller mottagarens Kiwi redan har en
+            with self._lock:
+                lst = list(self.kiwi.get(self.ref, []))
+            t = datetime.datetime.now(datetime.timezone.utc)
+            hhmm = t.hour * 100 + t.minute
+            upptagna = sorted(x["f"] for x in ut)
+            for x in lst:
+                if (lo_hz <= x["f"] <= hi_hz and kiwi_nyckel(x) not in ersatta and sander_nu(x, hhmm)
+                        and not any(abs(x["f"] - f) < 600 for f in upptagna)):
+                    ut.append(dict(x, _egen=False, _ref=True))
         ut.sort(key=lambda x: x["f"])
         return ut
 
@@ -276,11 +316,12 @@ def bevis_kontext(flaggor, f_hz, tol_hz=3500.0):
         if lage not in ("USB", "LSB") and abs(x["f"] - f_hz) > 1500:
             continue
         typ = typ_for(x)
-        namn = (x.get("namn") or "").upper()
+        # namn, Kiwins typ och anteckning: t.ex. "DDH7 GER", typ "FSK", "FSK WX" (DWD:s väder-RTTY)
+        namn = " ".join(str(x.get(k) or "") for k in ("namn", "typ", "not")).upper()
         txt = f"flagga {x.get('namn') or typ}"
         if typ in ("Fax/väder",) or "FAX" in namn:
             ut.append(("FSK2", 0.6, txt))
-        elif "RTTY" in namn or "NAVTEX" in namn or "SITOR" in namn:
+        elif any(k in namn for k in ("RTTY", "NAVTEX", "SITOR", "FSK")):
             ut.append(("FSK2", 0.8, txt))
         elif "STANAG" in namn:
             ut.append(("LIN", 0.8, txt))

@@ -340,7 +340,7 @@ BOOKMARK_VERSION = 2
 DEFAULT_CONF = {
     "source": "rtl", "tcp_addr": "127.0.0.1:1234", "kiwi_addr": "", "webrx_own": [], "my_pos": "", "auto_gain": True, "gain": 30.0, "ppm": 0,
     "agc_attack": 50.0, "agc_decay": 5.0,
-    "kiwi_auto_gain": True, "kiwi_gain": 65.0, "auto_sideband": True, "flaggor_kiwi": True, "flaggor_visa": True,
+    "kiwi_auto_gain": True, "kiwi_gain": 65.0, "auto_sideband": True, "flaggor_kiwi": True, "flaggor_visa": True, "flaggor_ref": True,
     "dsp_shape": "SHARP", "pbt_lo": 0.0, "pbt_hi": 0.0, "nb_on": False, "nb_level": 50, "nb_depth": 8,
     "nb_width": 20, "nr_on": False, "nr_level": 6, "anotch_on": False, "mnotch_on": False,
     "mnotch_freq": 1000.0, "mnotch_width": "M", "tone_hpf": 0, "tone_lpf": 0, "tone_bass": 0, "tone_treble": 0,
@@ -2183,7 +2183,7 @@ def run_gui(args):
             w = self.win
             fl = self.flag_at(x, y)
             if fl is not None:                   # klick på en flagga: stäm in den
-                w.tune(float(fl["f"]), flaggor.program_lage(fl.get("lage"), MODES))
+                w.tune_flagga(fl)
                 return
             st = w.step()
             fc = self.x_to_f(x)
@@ -4678,7 +4678,11 @@ def run_gui(args):
             key = (round(f), round(self.chosen_bw(hi - lo)))
             if self.an.tap.target is None or key != getattr(self, "_follow_key", None):
                 self._follow_key = key
-                self.set_target(f, hi - lo, fit=False)
+                if f < 30e6 and hi - lo > 15e3:
+                    # bred kanal på kortvåg (t.ex. kvarglömt WFM): mät signalen i stället för 180 kHz brus
+                    self.set_target(self.win.freq, 3000.0)
+                else:
+                    self.set_target(f, hi - lo, fit=False)
 
         def open_on_tuned(self):
             if self.an.tap.target is None:
@@ -5381,6 +5385,10 @@ def run_gui(args):
             self.flaggor.on_change = lambda: GLib.idle_add(self._flaggor_andrade)
             self.analyzer.ny_motor = conf.get("analys_motor", "ny") != "gammal"
             self.analyzer.kontext = lambda f: flaggor.bevis_kontext(self.flaggor, f)
+            self._ref_addr = conf.get("flaggor_ref_addr") or flaggor.REFERENS
+            if conf.get("flaggor_ref", True):
+                GLib.timeout_add(1500, lambda: self.flaggor.satt_referens(
+                    webbmottagare.norm_url(self._ref_addr), self._ref_addr) and False)
             self.view = SpectrumView(self)
             overlay = Gtk.Overlay()
             overlay.set_child(self.view)
@@ -5477,7 +5485,8 @@ def run_gui(args):
 
                 def _start_analys():
                     hit = self.carrier_at(fa, tol=5000)
-                    self.analyse(*(hit or (fa, DEFAULT_BW.get(self.engine.mode, 3000))))
+                    bw0 = DEFAULT_BW.get(self.engine.mode, 3000)
+                    self.analyse(*(hit or (fa, min(bw0, 12000.0) if fa < 30e6 else bw0)))
                     return False
                 GLib.timeout_add(2500, _start_analys)
 
@@ -5766,6 +5775,9 @@ def run_gui(args):
                          lambda v: (self._set_conf("flaggor_visa", v)))
             self._switch(g, "Hämta KiwiSDR:ns flaggor", c.get("flaggor_kiwi", True), self._on_flaggor_kiwi,
                          "Kiwins egna etiketter när en KiwiSDR är källa")
+            self._switch(g, "Flaggor från referens-Kiwi", c.get("flaggor_ref", True), self._on_flaggor_ref,
+                         "KiwiSDR:s fullständiga flagglista från Kiwin hos aprs.fi i Kuopio, oavsett mottagare. "
+                         "Hämtas en gång i veckan. Analysen använder flaggorna som stöd")
             self.flagg_status_row = Adw.ActionRow(title="Status", subtitle="–")
             g.add(self.flagg_status_row)
             self._button(g, "Hämta Kiwins flaggor igen", self._flaggor_hamta_om)
@@ -6075,6 +6087,28 @@ def run_gui(args):
             fcen = c + float(((kk - FFT_N / 2) * binhz * pw).sum() / pw.sum())
             return fcen, max((b - a + 1) * binhz, 300.0)
 
+        def tune_flagga(self, fl):
+            """Stäm in en flagga: flaggans läge (Kiwins namn översatta), och analysen riktas mot själva signalen.
+            Okänt läge under 30 MHz blir USB/LSB efter bandet – aldrig ett kvarglömt WFM/NFM på kortvåg."""
+            f = float(fl["f"])
+            m = flaggor.program_lage(fl.get("lage"), MODES)
+            if m is None and f < 30e6 and self.engine.mode in ("WFM", "NFM"):
+                m = ssb_zone(f)[0]
+            self.tune(f, m)
+            m = self.engine.mode
+            # signalen i förhållande till flaggan: för USB/LSB står flaggan på den inställda frekvensen
+            mat = True
+            if m in ("USB", "LSB"):
+                # flaggans kanal: talbandet 300–3000 Hz från den inställda frekvensen. Den används som den är –
+                # en bandbreddsmätning i en talpaus eller svag signal hittar annars bara en smal bit brus
+                c, g, mat = (f + 1650.0 if m == "USB" else f - 1650.0), 2700.0, False
+            else:
+                c, g = f, min(DEFAULT_BW.get(m, 3000), 12000.0 if f < 30e6 else 250e3)
+            ap = self.an_panel
+            if ap.follow.get_active():
+                ap.follow_tuned()                # håll Följ inställd i takt
+            ap.set_target(c, g, fit=mat)
+
         def analyse(self, f, bw, show=True):
             if self.an_panel.follow.get_active():
                 self.an_panel.follow.set_active(False)
@@ -6231,7 +6265,9 @@ def run_gui(args):
                 fl = self.flaggor
                 n_egna = sum(1 for x in fl.egna if x.get("kalla") != "dold")
                 n_kiwi = len(fl.kiwi.get(fl.kiwi_aktiv, [])) if fl.kiwi_aktiv else 0
-                r.set_subtitle(f"{n_egna} egna, {n_kiwi} från Kiwin" + (f" – {fl.status}" if fl.status else ""))
+                n_ref = len(fl.kiwi.get(fl.ref, [])) if fl.ref else 0
+                r.set_subtitle(f"{n_egna} egna, {n_kiwi} från Kiwin, {n_ref} från referensen"
+                               + (f" – {fl.status}" if fl.status else ""))
             return False
 
         def _on_flaggor_kiwi(self, v):
@@ -6240,6 +6276,13 @@ def run_gui(args):
             if v and self.engine.running and isinstance(src, KiwiSource):
                 self.flaggor.satt_kiwi(webbmottagare.norm_url(src.addr), src.addr)
             self.view.queue_draw()
+
+        def _on_flaggor_ref(self, v):
+            self.conf["flaggor_ref"] = v
+            if v:
+                self.flaggor.satt_referens(webbmottagare.norm_url(self._ref_addr), self._ref_addr)
+            else:
+                self.flaggor.satt_referens(None, None)
 
         def _flaggor_hamta_om(self):
             src = self.engine.source
@@ -6270,12 +6313,13 @@ def run_gui(args):
                                            f"{fl['f'] / 1e3:.2f} kHz {fl.get('lage', '')}", use_markup=True))
                 if fl.get("not"):
                     box.append(Gtk.Label(label=fl["not"][:80], wrap=True, xalign=0, css_classes=["dim-label"]))
-                knapp("Stäm in", lambda: self.tune(float(fl["f"]), flaggor.program_lage(fl.get("lage"), MODES)))
+                knapp("Stäm in", lambda: self.tune_flagga(fl))
                 knapp("Ändra flagga …", lambda: self.flagg_dialog(fl, fl["f"]))
                 if fl.get("_egen"):
                     knapp("Ta bort flagga", lambda: self.flaggor.ta_bort(fl["id"]))
                 else:
-                    knapp("Dölj Kiwins flagga", lambda: self.flaggor.dolj_kiwi(fl))
+                    knapp("Dölj referensens flagga" if fl.get("_ref") else "Dölj Kiwins flagga",
+                          lambda: self.flaggor.dolj_kiwi(fl))
                 box.append(Gtk.Separator())
             knapp(f"Lägg till flagga på {f_r / 1e6:.4f} MHz …", lambda: self.flagg_dialog(None, f_r))
             pop.set_child(box)
