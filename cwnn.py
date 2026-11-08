@@ -101,7 +101,7 @@ def spektrogram(z, f0=0.0):
     return S.astype(np.float32)
 
 
-def datamangd(antal, start, sek=8.0):
+def datamangd(antal, start, sek=6.0):
     X, Y = [], []
     for i in range(antal):
         z, tec = exempel(start + i, sek)
@@ -126,10 +126,11 @@ def modell(lstm=True):
     x = L.MaxPooling1D(2)(x)                                   # 10 ms
     x = L.BatchNormalization()(x)
     x = L.Conv1D(96, 5, padding="same", activation="relu")(x)
+    x = L.MaxPooling1D(2)(x)                                   # 20 ms per steg (prick i 40 ord/min = 30 ms)
     x = L.BatchNormalization()(x)
     if lstm:
-        x = L.Bidirectional(L.LSTM(96, return_sequences=True))(x)
-        x = L.Bidirectional(L.LSTM(96, return_sequences=True))(x)
+        x = L.Bidirectional(L.LSTM(64, return_sequences=True))(x)
+        x = L.Bidirectional(L.LSTM(64, return_sequences=True))(x)
     else:
         for d in (2, 4, 8, 16):                                # vidgade faltningar ger sammanhang
             x = L.Conv1D(96, 3, padding="same", dilation_rate=d, activation="relu")(x)
@@ -154,7 +155,7 @@ def trana_ctc(m, X, Y, epoker, Xv, Yv):
         yl = np.array([len(YY[i]) for i in ix], np.int32)
         for k, i in enumerate(ix):
             yb[k, :len(YY[i])] = YY[i]
-        xl = np.array([len(XX[i]) // 2 for i in ix], np.int32)
+        xl = np.array([len(XX[i]) // 4 for i in ix], np.int32)
         return xb, yb, xl, yl
 
     @tf.function(reduce_retracing=True)
@@ -184,7 +185,10 @@ def ALFABET_text(y):
 
 def avkoda_nn(m, S):
     import tensorflow as tf
-    lg = m(S[None], training=False)
+    if not hasattr(m, "_inf"):         # kompilerad avkodning (LSTM i eager-läge är mycket långsamt)
+        m._inf = tf.function(lambda x: m(x, training=False), reduce_retracing=True,
+                             input_signature=[tf.TensorSpec((1, None, BINS), tf.float32)])
+    lg = m._inf(tf.constant(S[None]))
     dec, _ = tf.nn.ctc_greedy_decoder(tf.transpose(lg, (1, 0, 2)), [lg.shape[1]], blank_index=len(ALFABET))
     ix = tf.sparse.to_dense(dec[0]).numpy()[0]
     return " ".join("".join(ALFABET[i] for i in ix if i < len(ALFABET)).split())
@@ -287,7 +291,7 @@ def main():
     if a.typ == "lstm":
         lstm_pulser()
         return 0
-    print(f"Skapar {a.antal} träningsklipp (8 s) …", flush=True)
+    print(f"Skapar {a.antal} träningsklipp (6 s) …", flush=True)
     X, Y = datamangd(a.antal, 100000)
     Xv, Yv = datamangd(300, 900000)
     print(f"{len(X)} klipp, {sum(len(y) for y in Y)} tecken. Tränar {a.typ} …", flush=True)
