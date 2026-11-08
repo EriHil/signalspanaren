@@ -52,6 +52,14 @@
 - **Analysrutan står still.** Mätvärdesrutan visar alltid samma rader i samma ordning. Saknas ett värde visas ett dämpat streck, i stället för att raden försvinner. Signaltypen står på en egen rad överst. Raden förkortas om den inte ryms, och hela texten finns i tooltip. Kolumnerna har fast bredd. Deviation, AM-grad och subton delar raden Modulation. Avkodarens värden står på raderna Avkodare och Avkodare, mer. I signaltyp-rutan till höger står rullistan och Redigera alltid kvar, bredvid varandra.
 - **Frekvensfördelning är standarddiagram** i diagramrutan i stället för Automatiskt.
 
+- **Ny analysmotor (bevismotor, ny fil `bevis.py`).** Den gamla analysen fällde en ny dom vart 0,4 s, så signaltypen hoppade. Ett exempel är Shannon VOLMET 5505 kHz, där en paus i talet såg ut som nyckling. Nu ger varje analyssteg poäng till alla tänkbara typer, och poängen samlas över ungefär 10 s. Visningen byter typ först när en annan typ har lett tydligt i 3 s. Procenten är motorns sannolikhet. Raden **Grund** visar vad beslutet bygger på, till exempel talrytm, bandbredd, flygband eller flagga, och vilka typer som annars är möjliga.
+  - **Taldetektor** över 3 s (stavelserytm 2–8 Hz och pauser). Tal ger minuspoäng till alla digitala typer och till CW.
+  - **Bandplan som stöd:** flyg-, rundradio-, amatör- och NAVTEX-frekvenser. FT8/FT4 finns bara i sina delband, och FT8/FT4-detektorn körs inte utanför dem. Den gav förut falsklarm på tal och smalnade kanalen till 300 Hz.
+  - **Flaggor som stöd:** KiwiSDR-flaggor och egna flaggor nära frekvensen ger lite stöd (inte facit).
+  - Motorn börjar räkna först när bandbredden är färdigmätt.
+  - Mätt med analystest: rätt typ visas i 98 % av stegen (förut 91 %), och visningen byter hälften så ofta (58 byten mot 116 på 46 klipp). Den gamla motorn kan väljas med `"analys_motor": "gammal"` i inställningsfilen.
+- **Rättat: klick på en KiwiSDR-flagga behöll fel läge.** Kiwins lägen (CWN, NBFM, AMN, USN, LSN, SAM …) kändes inte igen, så läget du hade stod kvar, till exempel WFM. Nu översätts de till CW, NFM, AM, USB och LSB.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

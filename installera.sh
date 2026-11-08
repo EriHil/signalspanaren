@@ -119,7 +119,7 @@ fi
 # ── 3. Programfiler ─────────────────────────────────────────────────
 mkdir -p "$DEST" "$BIN" "$APPS" "$ICONS" "$STATE"
 install -m 755 "$SRC/signalspanaren.py" "$DEST/signalspanaren.py"
-install -m 644 "$SRC/avkodare.py" "$SRC/adsb.py" "$SRC/kartvy.py" "$SRC/aktivitet.py" "$SRC/analys.py" \
+install -m 644 "$SRC/avkodare.py" "$SRC/adsb.py" "$SRC/kartvy.py" "$SRC/aktivitet.py" "$SRC/analys.py" "$SRC/bevis.py" \
   "$SRC/analysavkodare.py" "$SRC/iqfil.py" "$SRC/kiwisdr.py" "$SRC/dspfilter.py" "$SRC/flaggor.py" "$SRC/webbmottagare.py" "$SRC/signaldb.py" "$SRC/ai.py" "$SRC/frontpanel.py" "$SRC/skarm.py" "$SRC/MANUAL.txt" "$DEST/"
 install -m 755 "$SRC/adsb_karta.py" "$DEST/adsb_karta.py"
 install -m 755 "$SRC/installera.sh" "$DEST/installera.sh"

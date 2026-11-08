@@ -2183,8 +2183,7 @@ def run_gui(args):
             w = self.win
             fl = self.flag_at(x, y)
             if fl is not None:                   # klick på en flagga: stäm in den
-                m = fl.get("lage") or None
-                w.tune(float(fl["f"]), m if m in MODES else None)
+                w.tune(float(fl["f"]), flaggor.program_lage(fl.get("lage"), MODES))
                 return
             st = w.step()
             fc = self.x_to_f(x)
@@ -4288,7 +4287,7 @@ def run_gui(args):
                 ("snr", "SNR"), ("occ", "Upptagen bandbredd"), ("baud", "Symboltakt"), ("ram", "Ramperiod"),
                 ("shift", "Shift / tonavstånd"), ("toner", "Antal toner"), ("ljud", "Ljudfrekvens"),
                 ("mod", "Modulation"), ("skur", "Sändningsmönster"), ("env", "Envelopvariation"),
-                ("trafik", "Trafik"), ("avk1", "Avkodare"), ("avk2", "Avkodare, mer")]
+                ("trafik", "Trafik"), ("avk1", "Avkodare"), ("avk2", "Avkodare, mer"), ("grund", "Grund")]
         TITEL_BREDD = max(len(t) for _k, t in ROWS)
 
         def __init__(self, win):
@@ -4691,7 +4690,8 @@ def run_gui(args):
             if f is None:
                 return
             m = self.win.engine.mode
-            fam = (r or {}).get("fam")
+            vis = (r or {}).get("visad")
+            fam = {"FT8": "MFSK", "FT4": "FSK4"}.get(vis["fam"], vis["fam"]) if vis else (r or {}).get("fam")
             if fam in ("AM",) and m not in ("AM",):
                 m = "AM"
             elif fam == "FM" and m not in ("NFM", "WFM"):
@@ -4861,7 +4861,7 @@ def run_gui(args):
 
         def _typ_visa(self, r, op, shown):
             """Rullistan för signaltypen: Automatiskt, låst typ, operatörens val, kandidater och alla kända typer."""
-            visa = (bool(r) and r.get("fam") not in (None, "BRUS")) or op is not None
+            visa = (bool(r) and self._efam(r) not in (None, "BRUS")) or op is not None
             self._typ_busy = True
             try:
                 if not visa:
@@ -4905,7 +4905,7 @@ def run_gui(args):
             Sedan ändras rutan bara av dig (rullistan eller Redigera)."""
             esc = GLib.markup_escape_text
             shown = getattr(self, "_kand_shown", None)
-            if shown is None and r and r.get("fam") not in (None, "BRUS"):
+            if shown is None and r and self._efam(r) not in (None, "BRUS"):
                 hist = self._kand_hist
                 lock = r.get("kandidat") if r.get("kandidat_las") else None
                 hist.append((lock[1].get("namn"), lock) if lock is not None else None)
@@ -4948,10 +4948,19 @@ def run_gui(args):
             self.kand.set_tooltip_markup(f"{nm_l}\n{info_l}")
             self._typ_visa(r, op, shown)
 
+        def _efam(self, r):
+            """Signalfamiljen som visas: bevismotorns (stabil över tid), annars stegets egen."""
+            vis = (r or {}).get("visad")
+            if vis:
+                return vis["fam"]
+            if r and self.an.ny_motor and r.get("fam") not in (None, "BRUS"):
+                return "VÄNTAR"                  # motorn har inte bestämt sig än
+            return (r or {}).get("fam")
+
         def _update_rows(self, r):
-            self.klassa_btn.set_sensitive(bool(r and r.get("fam") not in (None, "BRUS")))
+            self.klassa_btn.set_sensitive(bool(r and self._efam(r) not in (None, "BRUS")))
             op = self._operator_flagga(r)
-            if not r or r.get("fam") in (None, "BRUS"):
+            if not r or self._efam(r) in (None, "BRUS"):
                 for key, _t in self.ROWS:
                     self._set(key, None)
                 self._set_klass("Ingen signal" if r else "–")
@@ -4960,13 +4969,31 @@ def run_gui(args):
                 self._kand_visa(r, op)
                 return
             fam = r["fam"]
-            sak = r.get("sakerhet")
-            if op is not None:
-                self._set_klass(f"{op['namn']} (din klassning) – analysen: {r['klass']}")
-            elif r.get("osaker"):
-                self._set_klass(f"Osäker – kanske {r['klass']} ({sak * 100:.0f} %)")
+            vis = r.get("visad")
+            if vis:                              # bevismotorn: samlat över tid, byter inte typ för varje steg
+                fam, klass, sak, osaker = vis["fam"], vis["klass"], vis["sakerhet"], vis["osaker"]
+                if fam == "FT8" or fam == "FT4":
+                    fam = "MFSK" if fam == "FT8" else "FSK4"
+            elif self.an.ny_motor:
+                klass, sak, osaker = None, None, False
             else:
-                self._set_klass(r["klass"] + (f" ({sak * 100:.0f} % säker)" if sak is not None else ""))
+                klass, sak, osaker = r["klass"], r.get("sakerhet"), r.get("osaker")
+            if klass is None:
+                self._set_klass(f"{op['namn']} (din klassning)" if op is not None else "Analyserar …")
+            elif op is not None:
+                self._set_klass(f"{op['namn']} (din klassning) – analysen: {klass}")
+            elif osaker:
+                self._set_klass(f"Osäker – kanske {klass} ({sak * 100:.0f} %)")
+            else:
+                self._set_klass(klass + (f" ({sak * 100:.0f} %)" if sak is not None else ""))
+            if vis:
+                namn_ = {"FT8": "FT8", "FT4": "FT4"}
+                andra = [f"{namn_.get(h, analys.FAM_NAMN.get(h, h).split(' (')[0])} {q * 100:.0f} %"
+                         for h, q in vis.get("topp", []) if h != vis["fam"] and q >= 0.05][:2]
+                g = "; ".join(vis.get("grund") or [])
+                self._set("grund", g + (f"  ·  annars {', '.join(andra)}" if andra else "") or None)
+            else:
+                self._set("grund", None)
             self._set("freq", f"{fmt_mhz(r['f_abs'])} MHz")
             self._set("avv", _fmt_hz(r.get("f_mid"), True))
             self._set("snr", f"{r.get('snr', 0):.1f} dB (topp {r.get('peak_snr', 0):.0f})")
@@ -5352,6 +5379,8 @@ def run_gui(args):
             self.flaggor = flaggor.Flaggor(CONF_DIR, CACHE_DIR)
             self.flaggor.kiwi_upptagen = lambda: self.engine.running and isinstance(self.engine.source, KiwiSource)
             self.flaggor.on_change = lambda: GLib.idle_add(self._flaggor_andrade)
+            self.analyzer.ny_motor = conf.get("analys_motor", "ny") != "gammal"
+            self.analyzer.kontext = lambda f: flaggor.bevis_kontext(self.flaggor, f)
             self.view = SpectrumView(self)
             overlay = Gtk.Overlay()
             overlay.set_child(self.view)
@@ -6241,7 +6270,7 @@ def run_gui(args):
                                            f"{fl['f'] / 1e3:.2f} kHz {fl.get('lage', '')}", use_markup=True))
                 if fl.get("not"):
                     box.append(Gtk.Label(label=fl["not"][:80], wrap=True, xalign=0, css_classes=["dim-label"]))
-                knapp("Stäm in", lambda: self.tune(float(fl["f"]), fl.get("lage") if fl.get("lage") in MODES else None))
+                knapp("Stäm in", lambda: self.tune(float(fl["f"]), flaggor.program_lage(fl.get("lage"), MODES)))
                 knapp("Ändra flagga …", lambda: self.flagg_dialog(fl, fl["f"]))
                 if fl.get("_egen"):
                     knapp("Ta bort flagga", lambda: self.flaggor.ta_bort(fl["id"]))

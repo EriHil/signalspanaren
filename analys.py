@@ -24,6 +24,7 @@ from scipy.signal import firwin, upfirdn, find_peaks
 from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
 import signaldb
+import bevis
 
 log = logging.getLogger("signalspanaren")
 
@@ -1377,6 +1378,11 @@ class Analyzer:
         self._ram_hist = deque(maxlen=8)       # ramperioder från de senaste stegen (None = ingen)
         self.fit = None                        # automatisk bandbredd, se set_target
         self._stable_fam = None
+        # bevismotorn (bevis.py): samlar bevis över tid och bestämmer vad som visas
+        self.motor = bevis.Bevismotor()
+        self.ny_motor = True
+        self.kontext = None                    # f_abs -> [(hypotes, poäng, förklaring)], t.ex. flaggor
+        self._tal = None
 
     FAM_FONSTER = 5
     FAM_BYT = 3
@@ -1387,6 +1393,9 @@ class Analyzer:
         if not hasattr(self, "_lagbaud"):
             self._lagbaud = deque(maxlen=6)
         r, provad = None, False
+        klick = getattr(self, "klick", tgt)
+        if self.ny_motor and not (bevis.ft_tillaten("FT8", klick) or bevis.ft_tillaten("FT4", klick)):
+            return                             # FT8/FT4 sänds bara i sina delband – inga falsklarm på tal
         # även vid BRUS/BÄRVÅG: FT4/FT8 sänder i omgångar, och i en smal kanal ser en ton ut som en bärvåg
         if feat.get("fam") != "AM" and feat.get("occ_bw", 0) < 8000:
             snap = self.tap.snapshot(4.0)
@@ -1565,6 +1574,9 @@ class Analyzer:
         self._lock_top_n = 0
         self._fam_hist.clear()
         self._stable_fam = None
+        if hasattr(self, "motor"):
+            self.motor.nollstall()
+        self._tal = None
         self._ram_hist.clear()
         self._fsk_mem = None
 
@@ -1703,9 +1715,18 @@ class Analyzer:
             feat["kandidater"] = signaldb.match(feat, f_abs, self.db, ac)
         self._lock_candidate(feat, feat.get("kandidater") or [], now)
         self._sakerhet(feat)
+        if self.ny_motor:
+            self._motor_steg(feat, f_abs, now)
         baud, shift, bw = feat.get("baud"), feat.get("shift"), feat.get("occ_bw")
         kand = feat.get("kandidat")
         kand_namn = kand[1].get("namn") if kand and isinstance(kand[1], dict) else "–"
+        vis = feat.get("visad") or {}
+        if vis:
+            log.info("Bevismotor: visar %s (%.0f %%), bäst nu %s, topp %s, grund %s, tal %s", vis.get("fam"),
+                     100 * (vis.get("sakerhet") or 0), vis.get("bast"),
+                     ", ".join(f"{h} {100 * q:.0f}" for h, q in vis.get("topp", [])),
+                     "; ".join(vis.get("grund", [])) or "–",
+                     f"{feat['tal']:.2f}" if feat.get("tal") is not None else "–")
         log.info("Analyssteg %.6f MHz: uppmätt %s / %s, %s Bd, shift %s Hz, bandbredd %s Hz, kandidat %s (%s), "
                  "passar %s, avkodare %s, text %d tecken",
                  f_abs / 1e6, feat.get("fam"), feat.get("klass"),
@@ -1718,6 +1739,35 @@ class Analyzer:
             self.fit["state"] = "survey"
             self.tap.set_target(tgt, self.fit["survey"])
         return feat, new
+
+    def _motor_steg(self, feat, f_abs, now):
+        """Kör bevismotorn och lägger resultatet i feat["visad"] (det panelen visar)."""
+        ft = self.fit
+        if ft is not None and ft.get("state") != "klar":
+            return                             # kanalen mäts fortfarande – stegen gäller fel bandbredd
+        if ft is not None and not ft.get("_motor"):
+            ft["_motor"] = True                # första steget på den färdiga kanalen: börja om
+            self.motor.nollstall()
+            self._tal = None
+        snap = self.tap.snapshot(3.0)
+        if snap is not None and len(snap[0]) >= snap[1] * 2.0:
+            m, _d = bevis.tal_matt(snap[0], snap[1])
+            if m is not None:
+                self._tal = m if self._tal is None else 0.6 * self._tal + 0.4 * m
+        feat["tal"] = self._tal
+        bredd = ft.get("width") if ft else None
+        try:
+            kontext = self.kontext(f_abs) if callable(self.kontext) else ()
+        except Exception:
+            kontext = ()
+        v = self.motor.steg(feat, f_abs, now, bredd=bredd, tal=self._tal, ft=feat.get("lagbaud"),
+                            kontext=kontext)
+        fam = v["fam"]
+        if fam is None:
+            return
+        namn = {"FT8": FAM_NAMN["MFSK"] + " (FT8)", "FT4": FAM_NAMN["FSK4"] + " (FT4)"}.get(fam) or FAM_NAMN.get(fam, fam)
+        feat["visad"] = {"fam": fam, "klass": namn, "sakerhet": v["p"], "osaker": v["p"] < self.OSAKER_GRANS,
+                         "bast": v["bast"], "topp": v["topp"], "grund": v["grund"]}
 
     def _loop(self):
         import logging

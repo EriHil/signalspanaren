@@ -46,10 +46,22 @@ GISSNING = 300.0       # analysen startar som om man klickat på en bärvåg: 30
 # ════════════════════════════════════════════════════════════════════
 # Kör analysen på ett klipp (som i programmet: kanal → analyssteg var 0,35 s)
 # ════════════════════════════════════════════════════════════════════
+NY_MOTOR = True
+
+
+def visad_fam(f):
+    """Det panelen visar som signalfamilj i steget (bevismotorn, annars den gamla klassningen)."""
+    v = f.get("visad")
+    if NY_MOTOR and v:
+        return {"FT8": "MFSK", "FT4": "FSK4"}.get(v["fam"], v["fam"])
+    return f.get("fam")
+
+
 def kor_analys(z, rate, f_hz, gissning=GISSNING, steg=0.35, mitt=None):
     """f_hz = signalens frekvens (där man klickar), mitt = klippets mittfrekvens (standard samma)."""
     mitt = f_hz if mitt is None else mitt
     an = analys.Analyzer(rate)
+    an.ny_motor = NY_MOTOR
     an.set_target(f_hz, gissning, auto=True)
     blk = max(256, int(rate * 0.05))
     per_steg = int(rate * steg)
@@ -74,6 +86,9 @@ def sammanfatta(an, feats):
     if not feats:
         ut.update(fam=None, klass="(inget resultat)", kandidat=None, snr=None)
         return ut
+    vis = [visad_fam(f) for f in feats if f.get("fam") is not None]
+    ut["visade"] = vis
+    ut["byten"] = sum(1 for a, b in zip(vis, vis[1:]) if a != b)
     sista = feats[len(feats) // 2:]
     fam = collections.Counter(f.get("fam") for f in sista).most_common(1)[0][0]
     kand = collections.Counter((f.get("kandidat") or (0, {"namn": None}))[1].get("namn") for f in sista)
@@ -89,7 +104,10 @@ def bedom(facit, res):
     bredd_ok = (res["bredd"] is not None and b[0] <= res["bredd"] <= b[1]) if b else None
     k = facit.get("kandidat")
     kand_ok = (res["kandidat"] == k) if k else None
-    return {"fam_ok": fam_ok, "bredd_ok": bredd_ok, "kand_ok": kand_ok}
+    vis = res.get("visade") or []
+    efter = vis[min(len(vis) - 1, 9):] if vis else []          # efter ~3 s
+    vis_ok = (sum(1 for x in efter if x in facit["fam"]) / len(efter)) if (facit.get("fam") and efter) else None
+    return {"fam_ok": fam_ok, "bredd_ok": bredd_ok, "kand_ok": kand_ok, "vis_ok": vis_ok}
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -201,6 +219,8 @@ def _bock(v):
 
 
 def mat(args):
+    global NY_MOTOR
+    NY_MOTOR = not getattr(args, "gammal", False)
     fall = []
     if not args.bara_syntetiskt:
         fall += [("inspelat",) + x for x in las_klipp(args.mapp)]
@@ -216,7 +236,7 @@ def mat(args):
         an, feats = kor_analys(z, rate, f_sig, mitt=float(facit.get("_mitt") or f_sig))
         res = sammanfatta(an, feats)
         rader.append({"typ": typ, "namn": namn, "facit": facit, "res": res, **bedom(facit, res)})
-    print(f"\n{'Signal':40} {'Facit':12} {'Fick':12} {'Bredd facit':>18} {'Uppmätt':>10}  Fam  Bredd Förslag")
+    print(f"\n{'Signal':40} {'Facit':12} {'Fick':12} {'Bredd facit':>18} {'Uppmätt':>10}  Fam  Bredd Visat Byten Förslag")
     print("─" * 120)
     for r in rader:
         f, res = r["facit"], r["res"]
@@ -224,8 +244,10 @@ def mat(args):
         kand = res.get("kandidat") or "–"
         if f.get("kandidat"):
             kand += f"  [{_bock(r['kand_ok'])}]"
+        vtxt = "–" if r["vis_ok"] is None else f"{100 * r['vis_ok']:.0f}%"
         print(f"{r['namn'][:40]:40} {'/'.join(f.get('fam') or ['?'])[:12]:12} {str(res['fam'])[:12]:12} "
-              f"{bf:>18} {_fmt_bredd(res['bredd']):>10}  {_bock(r['fam_ok']):4} {_bock(r['bredd_ok']):5} {kand[:40]}")
+              f"{bf:>18} {_fmt_bredd(res['bredd']):>10}  {_bock(r['fam_ok']):4} {_bock(r['bredd_ok']):5} "
+              f"{vtxt:>5} {res.get('byten', 0):5} {kand[:40]}")
     print("─" * 120)
 
     def andel(nyckel, typ=None):
@@ -237,7 +259,10 @@ def mat(args):
             continue
         a, b, c = andel("fam_ok", typ), andel("bredd_ok", typ), andel("kand_ok", typ)
         txt = (typ or "totalt").capitalize()
-        print(f"{txt:12}  signalfamilj {a[0]}/{a[1]}   bandbredd {b[0]}/{b[1]}   förslag {c[0]}/{c[1]}")
+        vv = [r["vis_ok"] for r in rader if r["vis_ok"] is not None and (typ is None or r["typ"] == typ)]
+        by = [r["res"].get("byten", 0) for r in rader if (typ is None or r["typ"] == typ)]
+        print(f"{txt:12}  signalfamilj {a[0]}/{a[1]}   bandbredd {b[0]}/{b[1]}   förslag {c[0]}/{c[1]}   "
+              f"visat rätt {100 * np.mean(vv) if vv else 0:.0f} % av stegen   byten {sum(by)}")
     # förväxlingar
     conf = collections.Counter((r["facit"]["fam"][0], r["res"]["fam"]) for r in rader
                                if r["fam_ok"] is False)
@@ -363,6 +388,7 @@ def main():
     sub = p.add_subparsers(dest="kommando", required=True)
     m = sub.add_parser("mat", help="mät analysen på klippen")
     m.add_argument("--bara-syntetiskt", action="store_true")
+    m.add_argument("--gammal", action="store_true", help="utan bevismotorn (som före 2026-11-08)")
     m.add_argument("--bara-inspelat", action="store_true")
     m.add_argument("--spara", metavar="FIL")
     m.add_argument("--jamfor", metavar="FIL")

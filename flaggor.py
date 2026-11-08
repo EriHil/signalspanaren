@@ -257,3 +257,62 @@ class Flaggor:
                     ut.append(dict(x, _egen=False))
         ut.sort(key=lambda x: x["f"])
         return ut
+
+
+def bevis_kontext(flaggor, f_hz, tol_hz=3500.0):
+    """Mjukt stöd till bevismotorn (bevis.py) från flaggorna nära f_hz: [(hypotes, poäng, förklaring)].
+
+    En flagga är inget facit – den säger vad som brukar sända här. Kiwi-flaggornas frekvens är ofta
+    uppringningsfrekvensen (för USB ligger signalen 0–3 kHz ovanför), därav den breda toleransen."""
+    if flaggor is None:
+        return []
+    ut = []
+    for x in flaggor.synliga(f_hz - tol_hz, f_hz + tol_hz):
+        lage = program_lage(x.get("lage")) or ""
+        if lage == "USB" and not (x["f"] - 300 <= f_hz <= x["f"] + 3300):
+            continue
+        if lage == "LSB" and not (x["f"] - 3300 <= f_hz <= x["f"] + 300):
+            continue
+        if lage not in ("USB", "LSB") and abs(x["f"] - f_hz) > 1500:
+            continue
+        typ = typ_for(x)
+        namn = (x.get("namn") or "").upper()
+        txt = f"flagga {x.get('namn') or typ}"
+        if typ in ("Fax/väder",) or "FAX" in namn:
+            ut.append(("FSK2", 0.6, txt))
+        elif "RTTY" in namn or "NAVTEX" in namn or "SITOR" in namn:
+            ut.append(("FSK2", 0.8, txt))
+        elif "STANAG" in namn:
+            ut.append(("LIN", 0.8, txt))
+        elif typ == "HFDL":
+            ut.append(("BPSK", 0.4, txt))
+            ut.append(("PSK8", 0.4, txt))
+        elif typ in ("Data", "Militär", "Spion"):
+            pass                              # för brett för att säga något om modulationen
+        elif lage == "AM":
+            ut.append(("AM", 0.8, txt))
+        elif lage == "CW" or typ in ("Fyr/bake", "Tid"):
+            ut.append(("OOK", 0.6, txt))
+        elif lage in ("USB", "LSB"):
+            ut.append(("SSB", 0.8, txt))
+        elif lage in ("NFM", "WFM"):
+            ut.append(("FM", 0.8, txt))
+    # en flagga per hypotes räcker (flera flaggor på samma ställe ska inte räknas flera gånger)
+    bast = {}
+    for h, v, t in ut:
+        if h not in bast or v > bast[h][1]:
+            bast[h] = (h, v, t)
+    return list(bast.values())
+
+
+# KiwiSDR:ns lägesnamn (kiwisdr.DX_LAGEN) → programmets lägen
+_KIWI_LAGE = {"AMN": "AM", "AMW": "AM", "SAM": "AM", "SAU": "USB", "SAL": "LSB", "SAS": "AM", "DRM": "AM",
+              "QAM": "AM", "CWN": "CW", "NBFM": "NFM", "NNFM": "NFM", "USN": "USB", "LSN": "LSB", "IQ": None}
+
+
+def program_lage(lage, lagen=("WFM", "NFM", "AM", "USB", "LSB", "CW")):
+    """Flaggans läge som ett läge programmet har (None = okänt, behåll nuvarande)."""
+    m = (lage or "").upper()
+    if m in lagen:
+        return m
+    return _KIWI_LAGE.get(m)
