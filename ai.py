@@ -1,14 +1,31 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """AI-chatt för signalanalysen. Standard: gratis online-AI utan nyckel (Pollinations).
-Valbart: Claude med egen API-nyckel. Nyckeln sparas med filrättigheter 600 och loggas aldrig."""
+Valbart: Groq och Gemini med gratis API-nyckel, Claude med egen API-nyckel. Nycklarna sparas med filrättigheter 600 och loggas aldrig."""
 import json
 import os
 import re
+import urllib.error
 import urllib.request
 
 GRATIS_URL = "https://text.pollinations.ai/openai"
 CLAUDE_URL = "https://api.anthropic.com/v1/messages"
-STANDARD = {"aktiv": True, "backend": "gratis", "gratis_modell": "openai", "claude_modell": "", "api_key": ""}
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+STANDARD = {"aktiv": True, "backend": "gratis", "gratis_modell": "openai", "claude_modell": "", "api_key": "",
+            "groq_modell": "openai/gpt-oss-20b", "groq_api_key": "",
+            "gemini_modell": "gemini-3.8-flash", "gemini_api_key": ""}
+NAMN = {"gratis": "Gratis (Pollinations)", "groq": "Groq", "gemini": "Gemini", "claude": "Claude"}
+# Modellerna i listan i chatten. Claude saknas här: modell-ID anges i inställningarna.
+MODELLER = {"gratis": ["openai"],
+            "groq": ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
+            "gemini": ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+            "claude": []}
+INFO = {"gratis": "Ingen nyckel krävs. Ett svar åt gången, ungefär var 30–45 s. Analysdata skickas till Pollinations.",
+        "groq": "Gratis API-nyckel från console.groq.com, ingen betalmetod krävs för gratisnivån. "
+                "Analysdata skickas till Groq.",
+        "gemini": "Gratis API-nyckel från aistudio.google.com. Gratisnivån får användas för att förbättra Googles "
+                  "produkter, så skicka inget känsligt. Analysdata skickas till Google.",
+        "claude": "Kräver din API-nyckel och krediter hos Anthropic. Analysdata skickas till Anthropic."}
 SYSTEM = ("Du är en assistent i programmet Signalspanaren för radioanalys. Svara på svenska och var tydlig med "
           "vad som är mätt och vad som är en gissning. Klassa aldrig en signal som säker utan tydliga belägg. "
           "När användaren och du är överens om vilken signal det är, avsluta svaret med en egen rad som börjar med FÖRSLAG= "
@@ -65,11 +82,45 @@ def systemprompt(analys=None):
     return SYSTEM if not analys else SYSTEM + "\n\nAktuell analys:\n" + analys
 
 
+def nyckel_falt(backend):
+    """Config-nyckeln för leverantörens API-nyckel. Claude använder den äldre nyckeln api_key."""
+    return "api_key" if backend == "claude" else f"{backend}_api_key"
+
+
+def val_modeller(cfg):
+    """Modellerna i chatten som (leverantör, modell-ID). Den inställda modellen finns alltid med."""
+    val = [(b, m) for b in NAMN for m in MODELLER[b]]
+    for b in NAMN:
+        m = cfg.get(f"{b}_modell") or ""
+        if m and (b, m) not in val:
+            val.append((b, m))
+    if not any(b == "claude" for b, _ in val):
+        val.append(("claude", ""))
+    return val
+
+
+def etikett(backend, modell):
+    return f"{NAMN[backend]} · {modell or 'ingen modell vald'}"
+
+
+def beskrivning(cfg):
+    """Texten under modellvalet i chatten: vald modell och vart analysdatan skickas."""
+    if not cfg.get("aktiv", True):
+        return "AI-chatten är avstängd. Slå på den under inställningar (⚙)."
+    b = cfg.get("backend") if cfg.get("backend") in NAMN else "gratis"
+    m = cfg.get(f"{b}_modell")
+    return f"{etikett(b, m)}. {INFO[b]}"
+
+
 def _post(url, body, headers, timeout=180):
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
                                  headers={"Content-Type": "application/json", **headers}, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as ex:
+        vanta = ex.headers.get("Retry-After")
+        raise RuntimeError(f"HTTP {ex.code}" + (f", försök igen om {vanta} s" if vanta else "")) from None
 
 
 def svar(cfg, meddelanden, system):
@@ -85,6 +136,16 @@ def svar(cfg, meddelanden, system):
                                "messages": meddelanden},
                   {"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01"})
         return "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
+    if cfg.get("backend") in ("groq", "gemini"):
+        b = cfg["backend"]
+        nyckel = cfg.get(nyckel_falt(b), "")
+        if not nyckel:
+            raise RuntimeError(f"ingen API-nyckel för {NAMN[b]} (ställ in den under inställningar)")
+        d = _post(GROQ_URL if b == "groq" else GEMINI_URL,
+                  {"model": cfg.get(f"{b}_modell") or MODELLER[b][0],
+                   "messages": [{"role": "system", "content": system}] + meddelanden},
+                  {"Authorization": f"Bearer {nyckel}"})
+        return d.get("choices", [{}])[0].get("message", {}).get("content") or ""
     d = _post(GRATIS_URL, {"model": cfg.get("gratis_modell") or "openai",
                            "messages": [{"role": "system", "content": system}] + meddelanden}, {})
     return d.get("choices", [{}])[0].get("message", {}).get("content", "")

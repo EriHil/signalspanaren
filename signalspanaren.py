@@ -5138,6 +5138,15 @@ def run_gui(args):
             box.set_margin_bottom(8)
             self._chat_info = Gtk.Label(xalign=0, wrap=True, css_classes=["dim-label"])
             box.append(self._chat_info)
+            self._chat_val = []
+            self._chat_modell_fyller = False
+            self._chat_modell = Gtk.DropDown.new_from_strings([])
+            self._chat_modell.set_hexpand(True)
+            self._chat_modell.connect("notify::selected", self._chat_modell_vald)
+            rad_modell = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            rad_modell.append(Gtk.Label(label="Modell", xalign=0))
+            rad_modell.append(self._chat_modell)
+            box.append(rad_modell)
             self._chat_buf = Gtk.TextBuffer()
             ctv = Gtk.TextView(buffer=self._chat_buf, editable=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
             ctv.set_left_margin(6)
@@ -5164,18 +5173,31 @@ def run_gui(args):
             win.set_content(tv)
             win.connect("close-request", lambda *_: win.set_visible(False) or True)
             self._chat_win = win
-            self._chat_visa_info()
+            self._chat_uppdatera_val()
             win.present()
 
-        def _chat_visa_info(self):
+        def _chat_uppdatera_val(self):
+            """Fyller modellvalet i chatten från inställningarna och visar vald modell."""
             cfg = ai.las_config(self._ai_cfg_sokv())
-            if not cfg["aktiv"]:
-                txt = "AI-chatten är avstängd. Slå på den under inställningar (⚙)."
-            elif cfg["backend"] == "claude":
-                txt = f"Claude ({cfg['claude_modell'] or 'ingen modell vald'}) med din nyckel. Analysdata skickas till Anthropic."
-            else:
-                txt = f"Gratis online-AI ({cfg['gratis_modell']}). Ingen nyckel krävs."
-            self._chat_info.set_text(txt)
+            self._chat_val = ai.val_modeller(cfg)
+            self._chat_modell_fyller = True
+            self._chat_modell.set_model(Gtk.StringList.new([ai.etikett(b, m) for b, m in self._chat_val]))
+            nu = (cfg["backend"], cfg.get(f"{cfg['backend']}_modell") or "")
+            self._chat_modell.set_selected(self._chat_val.index(nu) if nu in self._chat_val else 0)
+            self._chat_modell_fyller = False
+            self._chat_info.set_text(ai.beskrivning(cfg))
+
+        def _chat_modell_vald(self, dd, _pspec):
+            i = dd.get_selected()
+            if self._chat_modell_fyller or i >= len(self._chat_val):
+                return
+            b, m = self._chat_val[i]
+            cfg = ai.las_config(self._ai_cfg_sokv())
+            cfg["backend"] = b
+            if m:
+                cfg[f"{b}_modell"] = m
+            ai.spara_config(self._ai_cfg_sokv(), cfg)
+            self._chat_info.set_text(ai.beskrivning(cfg))
 
         def _chat_rad(self, text):
             self._chat_buf.insert(self._chat_buf.get_end_iter(), text + "\n\n")
@@ -5250,40 +5272,60 @@ def run_gui(args):
 
         def _open_ai_settings(self):
             cfg = ai.las_config(self._ai_cfg_sokv())
+            ordning = ["gratis", "groq", "gemini", "claude"]
             win = Adw.Window(title="Inställningar för AI", transient_for=self.win, default_width=460)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             box.set_margin_start(12)
             box.set_margin_end(12)
             box.set_margin_top(12)
             box.set_margin_bottom(12)
-            dd = Gtk.DropDown.new_from_strings(["Gratis online-AI (standard)", "Claude (egen API-nyckel)"])
-            dd.set_selected(1 if cfg["backend"] == "claude" else 0)
-            gratis = Gtk.Entry(text=cfg["gratis_modell"])
-            cmod = Gtk.Entry(text=cfg["claude_modell"], placeholder_text="modell-ID från ditt konto")
-            key = Gtk.Entry(text=cfg["api_key"], visibility=False, placeholder_text="API-nyckel")
-            info = Gtk.Label(xalign=0, wrap=True, css_classes=["dim-label"],
-                             label="Gratis-läget kräver ingen nyckel. Med Claude skickas analysdata till Anthropic.")
+            dd = Gtk.DropDown.new_from_strings(["Gratis (Pollinations, ingen nyckel)", "Groq (gratis API-nyckel)",
+                                                "Gemini (gratis API-nyckel)", "Claude (egen API-nyckel)"])
+            modell = Gtk.Entry(placeholder_text="modell-ID")
+            key = Gtk.Entry(visibility=False, placeholder_text="API-nyckel")
+            info = Gtk.Label(xalign=0, wrap=True, css_classes=["dim-label"])
             aktiv = Gtk.Switch(active=cfg["aktiv"], halign=Gtk.Align.START)
             rad_aktiv = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             rad_aktiv.append(Gtk.Label(label="Använd AI-chatten", xalign=0, hexpand=True))
             rad_aktiv.append(aktiv)
             spara = Gtk.Button(label="Spara")
             spara.add_css_class("suggested-action")
+            # Varje leverantör behåller sina egna värden, så att byte av leverantör inte tappar dem.
+            vardar = {b: {"modell": cfg.get(f"{b}_modell") or "",
+                          "nyckel": (cfg.get(ai.nyckel_falt(b)) or "") if b != "gratis" else ""} for b in ordning}
+            nu = [cfg["backend"] if cfg["backend"] in ordning else "gratis"]
+            dd.set_selected(ordning.index(nu[0]))
+
+            def _visa(b):
+                modell.set_text(vardar[b]["modell"])
+                key.set_text(vardar[b]["nyckel"])
+                key.set_sensitive(b != "gratis")
+                info.set_text(ai.INFO[b])
+
+            def _byt(*_):
+                vardar[nu[0]] = {"modell": modell.get_text().strip(), "nyckel": key.get_text().strip()}
+                nu[0] = ordning[dd.get_selected()]
+                _visa(nu[0])
+
+            _visa(nu[0])
+            dd.connect("notify::selected", _byt)
 
             def _spara(*_):
-                ny = {"aktiv": aktiv.get_active(), "backend": "claude" if dd.get_selected() == 1 else "gratis",
-                      "gratis_modell": gratis.get_text().strip() or "openai",
-                      "claude_modell": cmod.get_text().strip(), "api_key": key.get_text().strip()}
+                vardar[nu[0]] = {"modell": modell.get_text().strip(), "nyckel": key.get_text().strip()}
+                ny = {"aktiv": aktiv.get_active(), "backend": nu[0]}
+                for b, v in vardar.items():
+                    ny[f"{b}_modell"] = v["modell"]
+                    if b != "gratis":
+                        ny[ai.nyckel_falt(b)] = v["nyckel"]
                 ai.spara_config(self._ai_cfg_sokv(), ny)
                 self._ai_knapp_uppdatera()
                 if getattr(self, "_chat_win", None) is not None:
-                    self._chat_visa_info()
+                    self._chat_uppdatera_val()
                 win.close()
 
             spara.connect("clicked", _spara)
-            for w_ in (rad_aktiv, Gtk.Label(label="Leverantör", xalign=0), dd, Gtk.Label(label="Gratis modell", xalign=0), gratis,
-                       Gtk.Label(label="Claude-modell", xalign=0), cmod,
-                       Gtk.Label(label="API-nyckel (valfritt)", xalign=0), key, info, spara):
+            for w_ in (rad_aktiv, Gtk.Label(label="Leverantör", xalign=0), dd, Gtk.Label(label="Modell", xalign=0), modell,
+                       Gtk.Label(label="API-nyckel", xalign=0), key, info, spara):
                 box.append(w_)
             tv = Adw.ToolbarView()
             tv.add_top_bar(Adw.HeaderBar())
