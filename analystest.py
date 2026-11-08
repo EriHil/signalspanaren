@@ -16,6 +16,8 @@ analysen bättre eller sämre, och som underlag för att träna klassningen.
   python3 analystest.py samla "DWD RTTY 10,1008 MHz"   bara vissa
   python3 analystest.py spela-in --frekvens 7.1 --fam SSB --bredd 1800-3200 --namn "SSB 40 m"
                                                ett eget klipp med facit (t.ex. något du hört)
+  python3 analystest.py morse                  mät Morse-avkodaren (teckenfel vid olika takt, brus,
+                                               Farnsworth, handnyckling, fädning)
 
 Klippen sparas som SigMF (cf32) i ~/.local/share/signalspanaren/facit-klipp/ med facit i
 metadatat ("signalspanaren:facit"). Facit-listan för `samla` finns i facit.json bredvid skriptet.
@@ -382,6 +384,84 @@ def spela_in(args):
     return 0
 
 
+# ════════════════════════════════════════════════════════════════════
+# Morse-avkodaren: teckenfel mot facit under olika förhållanden
+# ════════════════════════════════════════════════════════════════════
+MORSE_TEXT = "CQ CQ DE SM0ABC SM0ABC PSE K TEST 73 THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 1234567890"
+MORSE_FALL = [
+    ("12 ord/min", dict(wpm=12)), ("18 ord/min", dict(wpm=18)), ("25 ord/min", dict(wpm=25)),
+    ("35 ord/min", dict(wpm=35)), ("45 ord/min", dict(wpm=45)), ("8 ord/min", dict(wpm=8)),
+    ("SNR 6 dB", dict(wpm=18, snr=6)), ("SNR 3 dB", dict(wpm=18, snr=3)), ("SNR 0 dB", dict(wpm=18, snr=0)),
+    ("Farnsworth 20/10", dict(wpm=20, fw=10)), ("Farnsworth 25/12", dict(wpm=25, fw=12)),
+    ("Handnyckel ±15 %", dict(wpm=16, jitter=0.15)), ("Handnyckel ±25 %", dict(wpm=16, jitter=0.25)),
+    ("Tunga streck 1:4", dict(wpm=20, dash=4.0)), ("Lätta streck 1:2,5", dict(wpm=20, dash=2.5)),
+    ("150 Hz vid sidan", dict(wpm=20, off=150)), ("−300 Hz vid sidan", dict(wpm=20, off=-300)),
+    ("Fädning (QSB) 80 %", dict(wpm=20, qsb=0.8)), ("fs 48 kHz", dict(wpm=20, fs=48000)),
+    ("fs 12 kHz, 0,1 s bitar", dict(wpm=22, fs=12000, chunk=0.1)),
+]
+
+
+def morse_nyckel(text, wpm, fw=None, jitter=0.0, dash=3.0, rng=None):
+    """[(på/av, sekunder)] för texten. fw = Farnsworth-takt för mellanrummen, jitter = handnyckling."""
+    rev = {v: k for k, v in analys.MORSE.items()}
+    u = 1.2 / wpm
+    uc = 1.2 / fw if fw else u
+
+    def j():
+        return max(0.2, 1 + jitter * rng.standard_normal()) if jitter else 1.0
+    ut = []
+    for w in text.split():
+        for ch in w:
+            for s in rev.get(ch, ""):
+                ut += [(1, u * (1 if s == "." else dash) * j()), (0, u * j())]
+            ut[-1] = (0, 3 * uc * j())
+        ut[-1] = (0, 7 * uc * j())
+    return ut
+
+
+def morse_signal(nyckel, fs, snr_db, rng, off=0.0, qsb=0.0):
+    """Komplext basband; snr_db räknas i 500 Hz bandbredd."""
+    k = np.concatenate([np.full(max(1, int(d * fs)), v, np.float32) for v, d in nyckel])
+    k = analys._smooth(k, fs * 0.004)
+    t = np.arange(len(k)) / fs
+    z = k * np.exp(2j * np.pi * off * t) * (1 - qsb * (0.5 + 0.5 * np.sin(2 * np.pi * 0.15 * t)))
+    sigma = 10 ** (-snr_db / 20) / np.sqrt(2) * np.sqrt(fs / 500)
+    return (z + sigma * (rng.standard_normal(len(k)) + 1j * rng.standard_normal(len(k)))).astype(np.complex64)
+
+
+def morse_fel(facit, fick):
+    """Andel teckenfel: bästa matchning av facit någonstans i den avkodade texten."""
+    import difflib
+    best = 1.0
+    for st in range(0, max(1, len(fick) - len(facit) + 1)):
+        best = min(best, 1 - difflib.SequenceMatcher(None, facit, fick[st:st + len(facit)]).ratio())
+    return best
+
+
+def morse_kor(wpm, fs=8000, snr=20, fw=None, jitter=0.0, dash=3.0, off=0.0, qsb=0.0, chunk=0.35, seed=1):
+    rng = np.random.default_rng(seed)
+    # texten sänds två gånger: det andra varvet mäts, när avkodaren har lärt sig takten
+    z = morse_signal(morse_nyckel(MORSE_TEXT + " " + MORSE_TEXT, wpm, fw, jitter, dash, rng), fs, snr, rng, off, qsb)
+    d = analys.CwAvkodare()
+    c = int(chunk * fs)
+    ut = "".join(d.feed(z[i:i + c], fs, {"fam": "OOK"}) for i in range(0, len(z), c))
+    return morse_fel(MORSE_TEXT, " ".join(ut.split())), " ".join(ut.split()), d
+
+
+def morse(args):
+    tot = 0.0
+    print(f"{'Fall':26} {'Fel':>6}  {'Uppmätt':28} Slutet av texten")
+    print("─" * 110)
+    for namn, kw in MORSE_FALL:
+        e, ut, d = morse_kor(**kw, seed=args.seed)
+        tot += e
+        v = ", ".join(x[1] for x in d.varden())
+        print(f"{namn:26} {e * 100:5.1f} %  {v[:28]:28} {ut[-48:]!r}")
+    print("─" * 110)
+    print(f"{'Medel':26} {tot / len(MORSE_FALL) * 100:5.1f} %")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="analystest", description="Mät Signalspanarens signalanalys mot facit.")
     p.add_argument("--mapp", default=KLIPP_DIR, help=f"mapp för facit-klipp (standard {KLIPP_DIR})")
@@ -404,8 +484,10 @@ def main():
     e.add_argument("--namn")
     e.add_argument("--kiwi", metavar="ADRESS")
     e.add_argument("--sekunder", type=float, default=20.0)
+    c = sub.add_parser("morse", help="mät Morse-avkodaren på syntetisk CW (takt, brus, Farnsworth, handnyckling)")
+    c.add_argument("--seed", type=int, default=1)
     args = p.parse_args()
-    return {"mat": mat, "samla": samla, "spela-in": spela_in}[args.kommando](args)
+    return {"mat": mat, "samla": samla, "spela-in": spela_in, "morse": morse}[args.kommando](args)
 
 
 if __name__ == "__main__":

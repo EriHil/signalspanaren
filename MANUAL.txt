@@ -242,7 +242,10 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
     • Klartext från avkodaren. Avkodaren väljs automatiskt efter signaltyp,
       eller tvingas fram med listan "Avkodare" (bra när klassningen tvekar):
         RTTY ......... Baudot 45,45/50/75/100 Bd, båda polariteterna
-        Morse ........ CW, takten lärs in automatiskt
+        Morse ........ CW, takten lärs in automatiskt: ton- och pauslängderna
+                       klustras (prick/streck, inom tecken/mellan tecken/ord),
+                       så Farnsworth-takt, tunga streck och handnyckling går
+                       bra. Följer bärvågen ±400 Hz och klarar fädning (QSB)
         NAVTEX ....... SITOR-B 100 Bd/170 Hz med FEC (518/490 kHz, 4209,5 kHz).
                        Hela meddelanden (ZCZC … NNNN) med ämne, t.ex.
                        navigationsvarning eller väderprognos
@@ -282,6 +285,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
                                  hur ofta signaltyp, bandbredd och förslag blir rätt
   python3 analystest.py samla    spelar in klippen i facit.json från KiwiSDR
   python3 analystest.py spela-in --frekvens 7.1 --fam SSB --bredd 1800-3200 --namn "SSB 40 m"
+  python3 analystest.py morse    mäter Morse-avkodarens teckenfel vid olika takt, brus,
+                                 Farnsworth, handnyckling, frekvensfel och fädning
   Klippen sparas i ~/.local/share/signalspanaren/facit-klipp/.
 
  Skärmanpassning

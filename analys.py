@@ -1517,102 +1517,322 @@ MORSE = {".-": "A", "-...": "B", "-.-.": "C", "-..": "D", ".": "E", "..-.": "F",
          ".-...": "&", "...-.-": "<SK>", "-.--.": "(", "-.--.-": ")", "---...": ":"}
 
 
+def _kmeans1d(x, init, iters=12):
+    """Enkel k-means i en dimension (för tidsavstånd i log-skala). Returnerar (centra, antal)."""
+    c = np.array(init, float)
+    for _ in range(iters):
+        lab = np.argmin(np.abs(x[:, None] - c[None, :]), axis=1)
+        nc = np.array([x[lab == k].mean() if np.any(lab == k) else c[k] for k in range(len(c))])
+        if np.allclose(nc, c):
+            break
+        c = np.sort(nc)
+    lab = np.argmin(np.abs(x[:, None] - c[None, :]), axis=1)
+    return c, np.bincount(lab, minlength=len(c))
+
+
 class CwAvkodare(Avkodare):
+    """Morse i tre steg:
+
+    1. Signalbehandling: bärvågen spåras och blandas ner till 0 Hz, ett smalt filter som följer
+       takten tar bort bruset och envelopen blir ett nyckelläge (på/av med hysteres).
+    2. Särdrag: nyckelläget blir en följd av tidsavstånd – tonlängder och pauslängder.
+       Störtoppar och korta avbrott i en ton slås ihop med grannarna.
+    3. Klassning: tonlängderna klustras i två grupper (prick/streck) och pauserna i tre
+       (inom tecknet / mellan tecken / mellan ord) med k-means i log-skala. Gränserna lärs
+       ur signalen själv, så avkodaren klarar Farnsworth-takt, tunga eller lätta streck och
+       ojämn handnyckling, inte bara de ideala förhållandena 1:3 och 1:3:7."""
     namn = "Morse (CW)"
-    RATE = 500.0     # Hz, upplösning för nyckelläget
+    RATE = 500.0       # Hz, upplösning för nyckelläget
+    RA = 2000.0        # Hz, mellansteg för bärvågsspårning och smalt filter
+    SOK_HZ = 400.0     # bärvågen söks inom ±400 Hz från mitten
+    MIN_EL = 0.012     # s; kortare toner är störningar (en prick i 100 ord/min)
+    GATE = 2.6         # tonnivå/brusnivå som krävs; rent brus ger ~2,2 efter det smala filtret
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.acc = np.zeros(0, np.float32)
-        self.state = False
-        self.run = 0
-        self.ons = deque(maxlen=60)
-        self.sym = ""
+        self.acc = np.zeros(0, np.complex64)       # rest till första decimeringen
+        self.acc2 = np.zeros(0, np.complex64)      # rest/svans till det smala filtret
+        self._dec = 0                              # fas i sista decimeringen
+        self.psd = None
+        self.f0 = 0.0
+        self.ph = 0.0
         self.lvl_hi = None
         self.lvl_lo = None
-        self.wpm = None
-        self._last_dot = None
+        self.min_el = self.MIN_EL
+        self.q = None                # utjämnad tonnivå/brusnivå
+        self.state = False
+        self.run = 0                 # sampel i pågående körning
+        self.marks = deque(maxlen=80)
+        self.spaces = deque(maxlen=120)
+        self.backlog = []            # tidsavstånd innan takten är känd (spelas upp i efterhand)
+        self.pend = None             # ton som väntar på beslut (ett kort avbrott kan följa)
+        self.gap = 0.0               # pågående paus i sekunder (inkl. ihopslagna störtoppar)
+        self.bridge = 0.0            # kort avbrott inne i en ton
+        self.sym = ""
         self.space_done = True
+        self.dot = None
+        self.dash = None
+        self.gaps = None             # (inom tecken, mellan tecken, mellan ord) i sekunder
+        self.wpm = None
+        self.fw = None               # Farnsworth: teckentakt härledd ur teckenmellanrummen
 
     def passar(self, feat):
         return feat.get("fam") == "OOK"
 
+    # ── 1. Signalbehandling ───────────────────────────────────────────
+    def _envelope(self, z, fs):
+        z = np.asarray(z, np.complex64)
+        k = max(1, int(round(fs / self.RA)))
+        ra = fs / k
+        x = np.concatenate((self.acc, z))
+        n = len(x) // k
+        if n == 0:
+            self.acc = x
+            return np.zeros(0, np.float32)
+        y = x[:n * k].reshape(n, k).mean(axis=1)
+        self.acc = x[n * k:]
+        # spåra bärvågen: medelvärdesbildat effektspektrum, toppen inom sökfönstret
+        if len(y) >= 128:
+            nf = 1 << int(math.log2(min(len(y), 2048)))
+            P = np.abs(np.fft.fft(y[-nf:] * np.hanning(nf))) ** 2
+            f = np.fft.fftfreq(nf, 1 / ra)
+            P = np.interp(np.linspace(-ra / 2, ra / 2, 512, endpoint=False), np.fft.fftshift(f), np.fft.fftshift(P))
+            self.psd = P if self.psd is None else 0.8 * self.psd + 0.2 * P
+            ff = np.linspace(-ra / 2, ra / 2, 512, endpoint=False)
+            inom = np.abs(ff) <= min(self.SOK_HZ, ra / 2 * 0.8)
+            Pi = self.psd[inom]
+            j = int(np.argmax(Pi))
+            if Pi[j] > 6 * np.median(Pi):        # tydlig topp: följ den
+                self.f0 = float(ff[inom][j])
+        t = np.arange(len(y))
+        y = y * np.exp(-1j * (self.ph + 2 * np.pi * self.f0 / ra * t))
+        self.ph = float((self.ph + 2 * np.pi * self.f0 / ra * len(y)) % (2 * np.pi))
+        # smalt filter: glidande medel ~ en halv prick (5–40 ms; 20 ord/min innan takten är känd).
+        # Toner kortare än filtret kan inte vara äkta – de räknas som störningar (se min_el).
+        L = int(np.clip(round((self.dot or 0.06) * 0.5 * ra), max(1, ra * 0.005), ra * 0.04))
+        self.min_el = max(self.MIN_EL, 0.8 * L / ra)
+        yy = np.concatenate((self.acc2, y))
+        if len(yy) < L:
+            self.acc2 = yy
+            return np.zeros(0, np.float32)
+        cs = np.concatenate(([0], np.cumsum(yy)))
+        m = (cs[L:] - cs[:-L]) / L
+        self.acc2 = yy[len(yy) - (L - 1):] if L > 1 else yy[:0]
+        # decimera till nyckellägets upplösning
+        d = max(1, int(round(ra / self.RATE)))
+        e = np.abs(m[(-self._dec) % d::d]).astype(np.float32)
+        self._dec = (self._dec + len(m)) % d
+        return e
+
+    def _key(self, e):
+        """Envelop → nyckelläge. Ton- och brusnivån följs element för element (klarar fädning, QSB),
+        tröskeln ligger mitt emellan med hysteres och aldrig nära brusets egen nivå."""
+        if self.lvl_hi is None:
+            self.lvl_hi = float(np.percentile(e, 95))
+            self.lvl_lo = float(np.percentile(e, 10))
+        R = self.RATE
+        a_on = 1 - math.exp(-1 / (R * 0.04))      # följer tonens nivå (40 ms)
+        a_off = 1 - math.exp(-1 / (R * 0.15))     # följer brusets nivå (150 ms)
+        a_dec = 1 / (R * 2.0)                     # utan toner sjunker tonnivån mot bruset (~2 s)
+        hi, lo = self.lvl_hi, self.lvl_lo
+        key = np.empty(len(e), bool)
+        st = self.state
+        for i, v in enumerate(e):
+            v = float(v)
+            if st:
+                hi += a_on * (v - hi)
+            else:
+                lo += a_off * (v - lo)
+                hi -= a_dec * (hi - lo)
+                if v > hi:
+                    hi = v
+            mid = 0.5 * (hi + lo)
+            floor = 2.0 * lo
+            if st and v < max(0.88 * mid, 0.75 * floor):
+                st = False
+            elif not st and v > max(1.12 * mid, floor):
+                st = True
+            key[i] = st
+        self.lvl_hi, self.lvl_lo = hi, lo
+        return key
+
+    # ── 2. Särdrag: tidsavstånd ───────────────────────────────────────
     def feed(self, z, fs, feat):
         if len(z) == 0:
             return ""
-        a = np.abs(z).astype(np.float32)
-        k = max(1, int(fs / self.RATE))
-        self.acc = np.concatenate((self.acc, a))
-        n = len(self.acc) // k
-        if n == 0:
+        e = self._envelope(z, fs)
+        if len(e) == 0:
             return ""
-        e = self.acc[:n * k].reshape(n, k).mean(axis=1)
-        self.acc = self.acc[n * k:]
-        hi, lo = float(np.percentile(e, 99)), float(np.percentile(e, 10))
-        self.lvl_hi = hi if self.lvl_hi is None else max(hi, self.lvl_hi * 0.93)
-        self.lvl_lo = lo if self.lvl_lo is None else min(lo, self.lvl_lo * 0.7 + lo * 0.3)
-        thr = (self.lvl_hi + self.lvl_lo) / 2
-        es = _smooth(e, 4)
-        out = []
-        dot = self._dot()
+        key = self._key(e)
         R = self.RATE
-        on_t, off_t = thr * 1.15, thr * 0.85     # hysteres mot brus
-        key = np.empty(len(es), bool)
-        st = self.state
-        for i, v in enumerate(es):
-            if st and v < off_t:
-                st = False
-            elif not st and v > on_t:
-                st = True
-            key[i] = st
-        for b in key:
-            if b == self.state:
-                self.run += 1
-                if not b and dot:
-                    if self.sym and self.run >= 2.2 * dot * R:
-                        out.append(MORSE.get(self.sym, "*"))
-                        self.sym = ""
-                        self.space_done = False
-                    if not self.space_done and self.run >= 5.5 * dot * R:
-                        out.append(" ")
-                        self.space_done = True
-                continue
-            if self.state:        # tonen slutade
-                dur = self.run / R
-                if dur < 0.008 or (dot and dur < 0.35 * dot):
-                    self.state = bool(b)       # störtopp – räknas inte
-                    self.run = 1
-                    continue
-                self.ons.append(dur)
-                dot = self._dot()
-                if dot:
-                    self.sym += "." if dur < 2 * dot else "-"
-            else:                 # pausen slutade – en ny ton börjar
-                self.space_done = True if not self.sym and self.run < 5.5 * (dot or 1) * R else self.space_done
-            self.state = bool(b)
-            self.run = 1
+        q = self.lvl_hi / max(self.lvl_lo, 1e-12)
+        self.q = q if self.q is None else 0.7 * self.q + 0.3 * q
+        if self.q < self.GATE:
+            # ingen tydlig nyckling (bara brus): lär inte takten av bruset och skriv inget
+            self.state, self.run = bool(key[-1]), 0
+            self.pend, self.bridge, self.gap, self.sym = None, 0.0, 0.0, ""
+            self.backlog = []
+            return ""
+        out = []
+        # körlängder ur nyckelläget (den sista körningen är öppen)
+        ch = np.flatnonzero(key[1:] != key[:-1]) + 1
+        starts = np.concatenate(([0], ch))
+        lens = np.diff(np.concatenate((starts, [len(key)])))
+        if key[0] != self.state:            # ny körning direkt i början
+            self._run_end(self.state, self.run / R, out)
+            self.run = 0
+        for s, n in zip(key[starts[:-1]], lens[:-1]):
+            self._run_end(bool(s), (self.run + n) / R, out)
+            self.run = 0
+        self.state = bool(key[starts[-1]])
+        self.run += int(lens[-1])
+        if not self.state:
+            self._open_gap(self.bridge + self.gap + self.run / R, out)
         return "".join(out)
 
-    def _dot(self):
-        if len(self.ons) < 6:
-            return None
-        x = np.asarray(self.ons)
-        x = x[x > 0.012]
-        if len(x) < 4:
-            return None
-        p10, p90 = np.percentile(x, 10), np.percentile(x, 90)
-        if p90 / p10 > 2:
-            dot = float(np.median(x[x < math.sqrt(p10 * p90)]))
+    def _run_end(self, mark, d, out):
+        """En körning (ton eller paus) med längden d sekunder har tagit slut."""
+        if self.dot is None:
+            self.backlog.append((mark, d))
+            if mark and d > self.min_el:
+                self.marks.append(d)
+            elif not mark and self.min_el < d < 3.0:
+                self.spaces.append(d)
+            if self._learn():
+                bl, self.backlog = self.backlog, []
+                self.marks.clear()          # fylls på igen när backloggen spelas upp
+                self.spaces.clear()
+                for m, dd in bl:
+                    self._run(m, dd, out)
+            return
+        self._run(mark, d, out)
+
+    def _run(self, mark, d, out):
+        dot = self.dot
+        if mark:
+            if d < max(self.min_el, 0.3 * dot):        # störtopp: en del av pausen
+                self.gap += d
+                return
+            if self.pend is not None and self.bridge:  # kort avbrott inne i en ton: slå ihop
+                self.pend += self.bridge + self.gap + d
+            else:
+                self.pend = d
+            self.bridge = 0.0
+            self.gap = 0.0
+            return
+        g = self.bridge + self.gap + d
+        self.gap = self.bridge = 0.0
+        if self.pend is not None and g < 0.3 * dot:   # avbrott – vänta på nästa ton
+            self.bridge = g
+            return
+        self._commit_mark()
+        if g < 4 * (self.gaps[2] if self.gaps else 7 * dot):
+            self.spaces.append(g)
+            self._learn()
+        self._open_gap(g, out)
+
+    def _open_gap(self, g, out):
+        """Pausen pågår fortfarande: skriv tecken/mellanslag så fort gränsen passerats."""
+        if self.dot is None:
+            return
+        if self.pend is not None and g >= 0.3 * self.dot:
+            self.gap += self.bridge          # avbrottet var början på pausen
+            self.bridge = 0.0
+            self._commit_mark()
+        c, w = self._thr()
+        if self.sym and g >= c:
+            out.append(MORSE.get(self.sym, "*"))
+            self.sym = ""
+            self.space_done = False
+        if not self.sym and not self.space_done and g >= w:
+            out.append(" ")
+            self.space_done = True
+
+    def _commit_mark(self):
+        if self.pend is None:
+            return
+        d = self.pend
+        self.pend = None
+        self.marks.append(d)
+        self._learn()
+        self.sym += "." if d < self._mark_thr() else "-"
+        if len(self.sym) > 8:              # orimligt långt tecken – troligen fel takt
+            self.sym = self.sym[-8:]
+
+    # ── 3. Klassning: adaptiva gränser ur tidsavstånden ───────────────
+    def _mark_thr(self):
+        return math.sqrt(self.dot * self.dash) if self.dash else 2 * self.dot
+
+    def _thr(self):
+        """(gräns tecken, gräns ord) för pauser, i sekunder."""
+        u = self.dot
+        if not self.gaps:
+            return 2 * u, 5 * u
+        e, c, w = self.gaps
+        ct = math.sqrt(e * c) if c / e >= 1.7 else 2 * e
+        ct = min(max(ct, 1.6 * u), 4.5 * u if c / e < 1.7 else ct)
+        wt = math.sqrt(c * w) if w / c >= 1.5 else max(ct * 2.2, 5 * u)
+        wt = max(wt, ct * 1.6)
+        return ct, wt
+
+    def _learn(self):
+        """Lär om takten ur de senaste tonerna och pauserna. Sant när den är känd."""
+        x = np.asarray(self.marks, float)
+        x = x[x > self.min_el]
+        if len(x) < 6:
+            return self.dot is not None
+        lx = np.log(x)
+        (c1, c2), cnt = _kmeans1d(lx, (np.percentile(lx, 10), np.percentile(lx, 90)))
+        sp = np.asarray(self.spaces, float)
+        sp = sp[sp > self.min_el]
+        if c2 - c1 > math.log(1.8) and min(cnt) >= 2:          # både prickar och streck
+            dot, dash = math.exp(c1), math.exp(c2)
         else:
-            dot = self._last_dot or float(np.median(x))
-        self._last_dot = dot
-        self.wpm = 1.2 / dot
-        return dot
+            # bara en sorts toner hittills: jämför med de kortaste pauserna (1 enhet)
+            m = math.exp(float(np.median(lx)))
+            u = float(np.percentile(sp, 20)) if len(sp) >= 4 else None
+            if self.dot and self.dash:
+                dot, dash = self.dot, self.dash
+            elif u and m > 2 * u:
+                dot, dash = m / 3, m
+            else:
+                dot, dash = m, None
+        if self.dot is None and len(sp) < 3 and dash is None:
+            return False
+        self.dot, self.dash = dot, dash
+        if len(sp) >= 6:
+            ls = np.log(sp)
+            # pauserna inom tecknet ligger nära prickens längd; de längre delas i tecken/ord
+            sm, big = ls[ls <= math.log(1.8 * dot)], ls[ls > math.log(1.8 * dot)]
+            e = math.exp(float(np.median(sm))) if len(sm) else dot
+            if len(big) >= 3:
+                (c1, c2), cnt = _kmeans1d(big, (np.percentile(big, 10), np.percentile(big, 95)))
+                cc, w = math.exp(c1), math.exp(c2)
+                if w / cc < 1.6 or min(cnt) == 0:     # inga ordmellanrum sedda (eller bara de)
+                    cc = math.exp(float(np.median(big)))
+                    w = 7 / 3 * cc
+            else:
+                cc, w = 3 * e, 7 * e
+            self.gaps = (min(e, 1.5 * dot), cc, w)
+        u = (dot + (dash / 3 if dash else dot) + (self.gaps[0] if self.gaps else dot)) / 3
+        self.wpm = 1.2 / u
+        self.fw = None
+        if self.gaps and self.gaps[1] > 4.5 * u:
+            # Farnsworth: teckenmellanrummen motsvarar en lägre takt
+            self.fw = 1.2 / (self.gaps[1] / 3)
+        return True
 
     def varden(self):
-        return [("Morse", f"{self.wpm:.0f} ord/min" if self.wpm else "lär sig takten …")]
+        if self.q is not None and self.q < self.GATE:
+            return [("Morse", "ingen tydlig nyckling")]
+        if not self.wpm:
+            return [("Morse", "lär sig takten …")]
+        v = [("Morse", f"{self.wpm:.0f} ord/min" + (f" (Farnsworth ~{self.fw:.0f})" if self.fw else ""))]
+        if self.dash:
+            v.append(("Prick:streck", f"1:{self.dash / self.dot:.1f}"))
+        return v
 
 
 AVKODARE = [RttyAvkodare, CwAvkodare]   # fler läggs till längst ner (analysavkodare.py)
