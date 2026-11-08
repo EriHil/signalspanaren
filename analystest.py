@@ -476,6 +476,25 @@ def morse(args):
         print(f"{namn:26} {e * 100:5.1f} %  {v[:28]:28} {ut[-48:]!r}")
     print("─" * 110)
     print(f"{'Medel':26} {tot / len(MORSE_FALL) * 100:5.1f} %")
+    # riktiga inspelningar med facit: testdata/cw/<namn>.wav + <namn>.txt
+    mapp = os.path.join(HERE, "testdata", "cw")
+    klipp = sorted(f for f in os.listdir(mapp) if f.endswith(".wav")) if os.path.isdir(mapp) else []
+    if klipp:
+        import cwjamfor
+        import difflib
+        print(f"\n{'Inspelning':26} {'Fel':>6}  Avkodat")
+        print("─" * 110)
+        for f in klipp:
+            txt = os.path.join(mapp, f[:-4] + ".txt")
+            if not os.path.exists(txt):
+                continue
+            with open(txt, encoding="utf-8") as fh:
+                facit = " ".join(fh.read().upper().split())
+            x, fs, iq = cwjamfor.las_wav(os.path.join(mapp, f))
+            z, _ = cwjamfor.till_basband(x, fs, not iq)
+            ut, _ = cwjamfor.signalspanaren(z, fs)
+            e = 1 - difflib.SequenceMatcher(None, facit, ut, autojunk=False).ratio()
+            print(f"{f[:-4][:26]:26} {e * 100:5.1f} %  {ut[:70]!r}")
     return 0
 
 

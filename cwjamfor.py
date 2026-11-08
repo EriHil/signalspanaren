@@ -106,6 +106,10 @@ def skriv_wav(p, a, fs=LJUD_FS):
 # Avkodarna
 # ════════════════════════════════════════════════════════════════════
 def signalspanaren(z, fs, bit=0.35):
+    # 2 s svagt brus efter klippet, så att de sista tecknen hinner skrivas ut (som ggmorse gör)
+    rng = np.random.default_rng(0)
+    sv = float(np.sqrt(np.mean(np.abs(z) ** 2))) * 1e-3 + 1e-9
+    z = np.concatenate((z, (sv * (rng.standard_normal(2 * fs) + 1j * rng.standard_normal(2 * fs))).astype(np.complex64)))
     d = analys.CwAvkodare()
     c = int(bit * fs)
     ut = "".join(d.feed(z[i:i + c], fs, {"fam": "OOK"}) for i in range(0, len(z), c))

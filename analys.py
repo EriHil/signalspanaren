@@ -1708,12 +1708,21 @@ class CwAvkodare(Avkodare):
         q = self.lvl_hi / max(self.lvl_lo, 1e-12)
         self.q = q if self.q is None else 0.7 * self.q + 0.3 * q
         if self.q < self.GATE:
-            # ingen tydlig nyckling (bara brus): lär inte takten av bruset och skriv inget
+            # ingen tydlig nyckling (bara brus): lär inte takten av bruset och skriv inget nytt,
+            # men ett tecken som redan var påbörjat när signalen försvann skrivs ut
+            ut = ""
+            if self.dot is not None and (self.rq or self.pend is not None or self.sym):
+                o = []
+                self._toem_ko(o)
+                self._commit_mark()
+                if self.sym:
+                    o.append(MORSE.get(self.sym, "*"))
+                ut = "".join(o)
             self.state, self.run = bool(key[-1]), 0
             self.pend, self.bridge, self.gap, self.sym = None, 0.0, 0.0, ""
             self.backlog = []
             self.rq = []
-            return ""
+            return ut
         out = []
         # körlängder ur nyckelläget (den sista körningen är öppen)
         ch = np.flatnonzero(key[1:] != key[:-1]) + 1
