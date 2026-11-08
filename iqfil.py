@@ -29,6 +29,7 @@ from fractions import Fraction
 
 import numpy as np
 from scipy.signal import firwin, resample_poly
+import scipy.fft as sfft
 
 DTYPES = {   # SigMF-datatyp: (numpy-typ, antal reella värden per sample, skala till ±1, offset)
     "cu8": (np.uint8, 2, 1 / 127.5, 127.5),
@@ -313,6 +314,64 @@ class IQReader:
 # ════════════════════════════════════════════════════════════════════
 # Omsampling (strömmande) till programmets takt
 # ════════════════════════════════════════════════════════════════════
+class FftUpsampler:
+    """Smal IQ (t.ex. KiwiSDR:s 12 kS/s) till bred takt med en enda FFT per bit: biten FFT:as, spektret
+    läggs mitt i ett större spektrum (där brus fylls i utanför det smala bandet) och en invers FFT ger
+    utsamplen. Ersätter resample_poly + separat brus-FFT och är flera gånger billigare.
+    Overlap-save: varje fönster har K insampel på var sida om biten, och spektret rullar av mjukt mot
+    Nyquist, så kanterna inte läcker in. En bits fördröjning, precis som Resampler."""
+
+    def __init__(self, rate_in, rate_out, chunk, noise_lo=0.415, noise_hi=0.47):
+        fr = Fraction(int(round(rate_out)), int(round(rate_in))).limit_denominator(4000)
+        self.up, self.down = fr.numerator, fr.denominator
+        self.ratio = self.up / self.down
+        self.L = int(chunk)
+        assert self.L % self.down == 0
+        self.K = -(-256 // self.down) * self.down
+        nw = self.L + 2 * self.K
+        self.nw = nw
+        self.N = nw * self.up // self.down
+        f = np.abs(np.fft.fftfreq(nw))                         # cykler per insampel
+        t = np.clip((f - 0.44) / 0.06, 0, 1)
+        self.smask = ((0.5 + 0.5 * np.cos(np.pi * t)) * self.ratio).astype(np.float32)
+        fo = np.abs(np.fft.fftfreq(self.N, 1 / rate_out)) / rate_in
+        t = np.clip((fo - noise_lo) / (noise_hi - noise_lo), 0, 1)
+        nm = np.sqrt(0.5 - 0.5 * np.cos(np.pi * t)).astype(np.float32)
+        self.nidx = np.flatnonzero(nm > 0)
+        self.nmask = nm[self.nidx]
+        self.rng = np.random.default_rng()
+        self.reset()
+
+    def reset(self):
+        self.prev = np.zeros(self.K, np.complex64)
+        self.pending = None
+
+    def process(self, x, nvar=None):
+        """x: L insampel. nvar: brusvarians per insampel (fylls i utanför bandet), None = inget brus.
+        Returnerar L·up/down utsampel för förra biten."""
+        x = np.asarray(x, np.complex64)
+        if self.pending is None:
+            self.pending = x
+            return np.zeros(0, np.complex64)
+        win = np.concatenate((self.prev, self.pending, x[:self.K]))
+        X = sfft.fft(win) * self.smask
+        h = self.nw // 2
+        Y = np.zeros(self.N, np.complex64)
+        Y[:h] = X[:h]
+        Y[self.N - h:] = X[h:]
+        if nvar is not None:
+            sd = np.float32(np.sqrt(max(nvar, 1e-14) * self.ratio * self.N / 2))
+            m = len(self.nidx)
+            w = self.rng.standard_normal(2 * m, dtype=np.float32).view(np.complex64)
+            Y[self.nidx] += w * (self.nmask * sd)
+        y = sfft.ifft(Y)
+        a = self.K * self.up // self.down
+        out = y[a:a + self.L * self.up // self.down]
+        self.prev = np.concatenate((self.prev, self.pending))[-self.K:]
+        self.pending = x
+        return out
+
+
 class Resampler:
     """Rationell omsampling i bitar med överlapp (resample_poly), kontinuerlig mellan bitarna."""
 

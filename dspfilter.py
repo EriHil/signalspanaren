@@ -14,8 +14,28 @@ smala filter.
 import math
 
 import numpy as np
-from scipy.signal import butter, firwin, iirnotch, sosfilt, tf2sos
+from scipy.signal import butter, firwin, iirnotch, sosfilt, tf2sos, upfirdn
 from scipy.ndimage import maximum_filter1d, median_filter
+
+
+class Decimator:
+    """FIR-filter + decimering med D, polyfas (räknar bara de utsampel som behålls) – samma resultat som
+    lfilter(h, 1, x)[::D] med tillstånd mellan blocken, men D gånger färre multiplikationer.
+    Blocklängden måste vara en multipel av D."""
+
+    def __init__(self, h, D):
+        self.D = int(D)
+        self.h = np.asarray(h, np.float32)
+        self.T = -(-(len(self.h) - 1) // self.D) * self.D      # historik, avrundad uppåt till multipel av D
+        self.tail = np.zeros(self.T, np.complex64)
+
+    def __call__(self, x):
+        x = np.asarray(x, np.complex64)
+        xin = np.concatenate((self.tail, x))
+        self.tail = xin[len(xin) - self.T:]
+        y = upfirdn(self.h, xin, 1, self.D)
+        a = self.T // self.D
+        return y[a:a + len(x) // self.D]
 
 # ════════════════════════════════════════════════════════════════════
 # Kanalfilter

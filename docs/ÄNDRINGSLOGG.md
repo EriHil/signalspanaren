@@ -18,6 +18,10 @@
 - [ ] **AI-sök efter tjänst eller signaltyp.** Be AI:n hitta till exempel VOLMET eller STANAG 4285. Sorteringen följer KiwiSDR-flaggornas typer. Frekvenserna verifieras med analysen, flaggorna är bara en lista. Träffen visas i vattenfallet och spelas upp. Om sökordet bara är en modulation, till exempel FSK, visas i stället de signaltyper som använder den.
 - [ ] **AI-chatten: kortare svar.** Gratis-AI:n skriver långa svar och ibland påhittade detaljer. Prompten behöver skärpas.
 
+## Ej släppt
+
+- **Rättat: CW-avkodningen (och allt annat) laggade med KiwiSDR.** DSP-tråden hann inte med (60–70 ms per block mot 42,7 ms tillåtet), så kön mot Kiwin fylldes till 1 s och data kastades – tecknen hackades sönder och kom sent. Kiwins 12 kS/s räknas nu upp till full takt med en enda FFT (omsampling och brus utanför bandet i samma steg), FIR-decimeringen i demodulatorn räknar bara de sampel som behålls (polyfas), och blandningen återanvänder en färdig rotator i complex64. En Kiwi-kedja tar 13 ms per block i stället för 22 ms med ledig dator, och ungefär hälften så lång tid under last. Huvudorsaken 2026-11-08 var att Ollama körde på CPU (cirka 390 % CPU) samtidigt.
+
 ## 2.12.1 (2026-11-08)
 
 - **Byt AI-modell i chatten.** Under chattens text finns en modellväljare med Gratis (Pollinations), Groq (`openai/gpt-oss-20b` och `120b`), Gemini (Flash och Flash-Lite), OpenRouter (`qwen/qwen3.6-plus-preview:free`) och Claude. Valet sparas direkt. Groq, Gemini och OpenRouter har gratisnivåer med egen API-nyckel, som läggs in under Inställningar för AI. Varje leverantör behåller sin nyckel. Analysdata skickas till leverantören du väljer, och texten under modellvalet säger vilken. Fel från tjänsten visar när du kan försöka igen.

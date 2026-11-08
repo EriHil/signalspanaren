@@ -1250,7 +1250,7 @@ class Engine:
         self._filt_key = self._filter_key(mode, bw)
         cut1 = float(np.clip(bw / 2 + 10e3, 30e3, 150e3)) if mode == "WFM" else 60e3
         self.h1 = firwin(63, cut1, fs=SR)
-        self.z1 = np.zeros(len(self.h1) - 1, np.complex128)
+        self.dec1 = dspfilter.Decimator(self.h1, D1)
         if mode == "WFM":
             self.hw = firwin(127, 15e3, fs=FS1)
             self.zw = np.zeros(len(self.hw) - 1)
@@ -1260,7 +1260,7 @@ class Engine:
             self._last = 0j
         else:
             self.h2 = firwin(127, 22e3, fs=FS1)
-            self.z2 = np.zeros(len(self.h2) - 1, np.complex128)
+            self.dec2 = dspfilter.Decimator(self.h2, D2)
             lo, hi = dspfilter.pbt_edges(mode, min(bw, 46000), self.pbt_lo, self.pbt_hi)
             lo, hi = max(lo, -23000.0), min(hi, 23000.0)
             self.cfir = dspfilter.FftFir(dspfilter.channel_taps(
@@ -1433,7 +1433,14 @@ class Engine:
             self._zph = 0.0
             self._zbuf = np.zeros(0, np.complex64)
         w = -2 * np.pi * (vc - c) / SR
-        xm = (x * np.exp(1j * (self._zph + w * np.arange(len(x))))).astype(np.complex64)
+        if w == 0.0:
+            xm = x.astype(np.complex64, copy=False)          # KiwiSDR: bandet ligger alltid mitt i
+        else:
+            k = (w, len(x))
+            if getattr(self, "_zrot_key", None) != k:
+                self._zrot_key = k
+                self._zrot = np.exp(1j * w * np.arange(len(x))).astype(np.complex64)
+            xm = x * (self._zrot * np.complex64(np.exp(1j * self._zph)))
         self._zph = (self._zph + w * len(x)) % (2 * np.pi)
         xin = np.concatenate((self._ztail, xm))
         self._ztail = xm[-(len(self._zh) - 1):]
@@ -1445,6 +1452,14 @@ class Engine:
         seg = self._zbuf[-m * FFT_N:].reshape(m, FFT_N) * self.win
         p = np.fft.fftshift((np.abs(np.fft.fft(seg, axis=1)) ** 2).mean(axis=0)) / self.win_norm
         return (10 * np.log10(p + 1e-20)).astype(np.float32), vc, SR / z
+
+    def _rotator(self, w, n):
+        """exp(j·w·k), k = 0…n−1, i complex64 – sparas så länge blandningsfrekvensen är densamma."""
+        key = (w, n)
+        if getattr(self, "_rot_key", None) != key:
+            self._rot_key = key
+            self._rot = np.exp(1j * w * np.arange(n)).astype(np.complex64)
+        return self._rot
 
     def _process(self, x, c, raw):
         now = time.time()
@@ -1541,12 +1556,10 @@ class Engine:
         # Demodulering
         if self._filt_key != self._filter_key(mode, bw):
             self._rebuild(mode, bw)
-        n = np.arange(BLOCK)
         w = -2 * np.pi * off / SR
-        y = x * np.exp(1j * (self._ph + w * n))
+        y = x * (self._rotator(w, BLOCK) * np.complex64(np.exp(1j * self._ph)))
         self._ph = (self._ph + w * BLOCK) % (2 * np.pi)
-        y, self.z1 = lfilter(self.h1, 1.0, y, zi=self.z1)
-        y = y[::D1]
+        y = self.dec1(y)
         if self.nb_on and mode != "WFM":
             y = self.nb.process(y)                  # pulsblankare på bredbandig IQ (384 kHz)
         if mode == "WFM":
@@ -1557,8 +1570,7 @@ class Engine:
             a, self.zw = lfilter(self.hw, 1.0, d, zi=self.zw)
             a = a[::D2] * (0.7 / (2 * np.pi * 75e3 / FS1))
         else:
-            y, self.z2 = lfilter(self.h2, 1.0, y, zi=self.z2)
-            y = y[::D2]
+            y = self.dec2(y)
             if mode == "CW":
                 m = np.arange(len(y))
                 wb = 2 * np.pi * CW_TONE / AF
@@ -8592,6 +8604,8 @@ def selftest_webrx():
     """Webbmottagarlistan utan nätverk: lokator, avstånd, sammanslagning och svensk-filtret."""
     W = webbmottagare
     ok = True
+    ok &= kiwisdr.parse_addr("http://lodsdr.proxy.kiwisdr.com") == (
+        "lodsdr.proxy.kiwisdr.com", 8073, "", False)
     la, lo = W.locator_to_latlon("JO99bg")
     ok &= abs(la - 59.2708) < 0.001 and abs(lo - 18.125) < 0.001
     ok &= round(W.distance_km((59.33, 18.07), (57.71, 11.97))) in range(390, 400)    # Stockholm–Göteborg
@@ -8603,7 +8617,7 @@ def selftest_webrx():
     ok &= len(m) == 2 and m[0]["users_max"] == 8 and m[0]["ext_api"] == 0 and m[0]["källor"] == ["A", "B", "C"]
     ok &= W.is_swedish(m[1]) and not W.kiwi_ok(m[0])
     ok &= len(W.builtin()) == len(W.BUILTIN) and any("sk6ag" in r["url"] for r in W.builtin())
-    print(f"  Webbmottagare (lokator, avstånd, sammanslagning): {'OK' if ok else 'FEL'}")
+    print(f"  Webbmottagare (Kiwi-adress, lokator, avstånd, sammanslagning): {'OK' if ok else 'FEL'}")
     return ok
 
 

@@ -160,8 +160,14 @@ def parse_addr(addr):
     if not u.hostname:
         raise KiwiError(f"Kan inte tolka KiwiSDR-adressen: {addr}")
     secure = u.scheme in ("https", "wss")
-    if port is None:     # inklistrad webbadress utan port = webbens port, annars Kiwins standard 8073
-        port = (443 if secure else 80) if had_scheme else 8073
+    if port is None:
+        is_kiwi_proxy = u.hostname.lower().endswith(".proxy.kiwisdr.com")
+        if is_kiwi_proxy and not secure:
+            port = 8073  # websocket-klienten följer inte proxyns redirect från port 80
+        elif had_scheme:
+            port = 443 if secure else 80
+        else:
+            port = 8073
     pw = urllib.parse.unquote(u.password or u.username or "") if "@" in u.netloc else ""
     return u.hostname, port, pw, secure
 
@@ -394,7 +400,6 @@ class KiwiSource:
         self._sparad = {}
         self._plock = threading.Lock()
         self._nvar = None
-        self._nmask = None
         self._buf = np.zeros(0, np.complex64)
 
     # gränssnitt som BaseSource
@@ -437,8 +442,12 @@ class KiwiSource:
             raise
         self.cli = c
         self.narrow_rate = float(c.nominal)
-        self.rs = iqfil.Resampler(c.nominal, self.out_rate)
-        self.chunk_in = max(self.rs.down, int(round(self.block / self.rs.ratio / self.rs.down)) * self.rs.down)
+        fr = iqfil.Fraction(int(round(self.out_rate)), int(c.nominal)).limit_denominator(4000)
+        ratio, down = fr.numerator / fr.denominator, fr.denominator
+        self.chunk_in = max(down, int(round(self.block / ratio / down)) * down)
+        # omsampling och brus utanför Kiwins band i samma FFT (resample_poly + brus-FFT var för dyrt:
+        # DSP-tråden hann inte med när datorn hade annat att göra)
+        self.rs = iqfil.FftUpsampler(c.nominal, self.out_rate, self.chunk_in)
         self._buf = np.zeros(0, np.complex64)
         self._buf_center = self.center
         self._nvar = None
@@ -475,17 +484,6 @@ class KiwiSource:
         fr = np.abs(np.fft.fftfreq(N))
         return float(np.percentile(P[:, fr < 0.4], 20) / 0.2231)  # bara mitten: kanterna dämpas av Kiwins filter
 
-    def _outband(self, n):
-        if self._nmask is None or len(self._nmask) != n:
-            # mjuk övergång där Kiwins eget filter rullar av (ca 0,42–0,47 × takten), så att
-            # bruset inte får en grop eller puckel vid bandkanten
-            fr = np.abs(np.fft.fftfreq(n, 1 / self.out_rate)) / self.narrow_rate
-            t = np.clip((fr - 0.415) / (0.47 - 0.415), 0, 1)
-            self._nmask = np.sqrt(0.5 - 0.5 * np.cos(np.pi * t)).astype(np.float32)
-        sd = np.sqrt(max(self._nvar or 1e-12, 1e-14) * self.rs.ratio / 2)
-        w = (np.random.standard_normal(2 * n) * sd).astype(np.float32).view(np.complex64)
-        return np.fft.ifft(np.fft.fft(w) * self._nmask).astype(np.complex64)
-
     def read(self):
         p = self._take()
         if p:
@@ -498,11 +496,10 @@ class KiwiSource:
             if v:
                 self._nest.append(v)
                 self._nvar = float(np.median(self._nest))
-            self._buf = np.concatenate((self._buf, self.rs.process(x)))
+            self._buf = np.concatenate((self._buf, self.rs.process(x, self._nvar or 1e-12)))
         out = self._buf[:self.block]
         self._buf = self._buf[self.block:]
-        out = out + self._outband(len(out))
-        return out.astype(np.complex64), self.center, None
+        return out, self.center, None
 
     def fine_carrier(self, rel_hz, win=400.0):
         """Mäter en bärvåg nära rel_hz (Hz från mittfrekvensen) i de senaste ca 4 s av Kiwins smala

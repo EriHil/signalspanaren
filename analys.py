@@ -155,8 +155,10 @@ class ChannelTap:
             self.status = "ok"
             n = len(x)
             w = -2 * np.pi * off / self.sr
-            ph = self.ph + w * np.arange(n)
-            y = x * np.exp(1j * ph).astype(np.complex64)
+            if getattr(self, "_rot_key", None) != (w, n):          # samma blandning block efter block
+                self._rot_key = (w, n)
+                self._rot = np.exp(1j * w * np.arange(n)).astype(np.complex64)
+            y = x * (self._rot * np.complex64(np.exp(1j * self.ph)))
             self.ph = float((self.ph + w * n) % (2 * np.pi))
             for s in self.stages:
                 y = s(y)
