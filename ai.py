@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """AI-chatt för signalanalysen. Standard: gratis online-AI utan nyckel (Pollinations).
-Valbart: Groq och Gemini med gratis API-nyckel, Claude med egen API-nyckel. Nycklarna sparas med filrättigheter 600 och loggas aldrig."""
+Valbart: Groq, Gemini och OpenRouter med egen API-nyckel, samt Claude med egen API-nyckel.
+Nycklarna sparas med filrättigheter 600 och loggas aldrig."""
 import json
 import os
 import re
@@ -11,20 +12,27 @@ GRATIS_URL = "https://text.pollinations.ai/openai"
 CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 STANDARD = {"aktiv": True, "backend": "gratis", "gratis_modell": "openai", "claude_modell": "", "api_key": "",
             "groq_modell": "openai/gpt-oss-20b", "groq_api_key": "",
-            "gemini_modell": "gemini-3.8-flash", "gemini_api_key": ""}
-NAMN = {"gratis": "Gratis (Pollinations)", "groq": "Groq", "gemini": "Gemini", "claude": "Claude"}
+            "gemini_modell": "gemini-3.8-flash", "gemini_api_key": "",
+            "openrouter_modell": "qwen/qwen3.6-plus-preview:free", "openrouter_api_key": ""}
+NAMN = {"gratis": "Gratis (Pollinations)", "groq": "Groq", "gemini": "Gemini",
+        "openrouter": "OpenRouter", "claude": "Claude"}
 # Modellerna i listan i chatten. Claude saknas här: modell-ID anges i inställningarna.
 MODELLER = {"gratis": ["openai"],
             "groq": ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
             "gemini": ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+            "openrouter": ["qwen/qwen3.6-plus-preview:free"],
             "claude": []}
 INFO = {"gratis": "Ingen nyckel krävs. Ett svar åt gången, ungefär var 30–45 s. Analysdata skickas till Pollinations.",
         "groq": "Gratis API-nyckel från console.groq.com, ingen betalmetod krävs för gratisnivån. "
                 "Analysdata skickas till Groq.",
         "gemini": "Gratis API-nyckel från aistudio.google.com. Gratisnivån får användas för att förbättra Googles "
                   "produkter, så skicka inget känsligt. Analysdata skickas till Google.",
+        "openrouter": "Gratis API-nyckel från openrouter.ai. qwen/qwen3.6-plus-preview:free är en gratis "
+                      "förhandsversion, och dess data kan användas för att förbättra modellen. "
+                      "Analysdata skickas till OpenRouter.",
         "claude": "Kräver din API-nyckel och krediter hos Anthropic. Analysdata skickas till Anthropic."}
 SYSTEM = ("Du är en assistent i programmet Signalspanaren för radioanalys. Svara på svenska och var tydlig med "
           "vad som är mätt och vad som är en gissning. Klassa aldrig en signal som säker utan tydliga belägg. "
@@ -136,12 +144,12 @@ def svar(cfg, meddelanden, system):
                                "messages": meddelanden},
                   {"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01"})
         return "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
-    if cfg.get("backend") in ("groq", "gemini"):
+    if cfg.get("backend") in ("groq", "gemini", "openrouter"):
         b = cfg["backend"]
         nyckel = cfg.get(nyckel_falt(b), "")
         if not nyckel:
             raise RuntimeError(f"ingen API-nyckel för {NAMN[b]} (ställ in den under inställningar)")
-        d = _post(GROQ_URL if b == "groq" else GEMINI_URL,
+        d = _post({"groq": GROQ_URL, "gemini": GEMINI_URL, "openrouter": OPENROUTER_URL}[b],
                   {"model": cfg.get(f"{b}_modell") or MODELLER[b][0],
                    "messages": [{"role": "system", "content": system}] + meddelanden},
                   {"Authorization": f"Bearer {nyckel}"})

@@ -44,8 +44,8 @@
   <releases>
     <release version="2.12.1" date="2026-11-08">
       <description>
-        <p>AI-chatten har fått modellval: gratis Pollinations, Groq eller Gemini med egen
-           gratisnyckel, eller Claude. Ny bevismotor med säkerhetsmått och egen klassning,
+        <p>AI-chatten har fått modellval: gratis Pollinations, Groq, Gemini eller OpenRouter med
+           egen gratisnyckel, eller Claude. Ny bevismotor med säkerhetsmått och egen klassning,
            stationflaggor ovanför vattenfallet och flera rättningar för svaga signaler, MSK,
            RTTY och nycklade bärvågor.</p>
       </description>
