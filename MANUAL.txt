@@ -246,6 +246,10 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
                        klustras (prick/streck, inom tecken/mellan tecken/ord),
                        så Farnsworth-takt, tunga streck och handnyckling går
                        bra. Följer bärvågen ±400 Hz och klarar fädning (QSB)
+        Morse – träningsgrupper (5 tecken) ... för t.ex. FAV22 (3881/6825 kHz):
+                       väljs i listan "Avkodare". Grupper med fel antal tecken
+                       lagas – ett tecken som fädning delat (T + M) blir O igen,
+                       och en grupp som delats i två slås ihop
         NAVTEX ....... SITOR-B 100 Bd/170 Hz med FEC (518/490 kHz, 4209,5 kHz).
                        Hela meddelanden (ZCZC … NNNN) med ämne, t.ex.
                        navigationsvarning eller väderprognos

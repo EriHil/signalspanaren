@@ -8,6 +8,7 @@ Jämför Signalspanarens Morse-avkodare med fldigi (referensavkodare) på samma 
   python3 cwjamfor.py klipp.sigmf-meta           IQ-klipp (t.ex. från analystest.py spela-in)
   python3 cwjamfor.py klipp.wav --facit "CQ CQ DE ..."   mät båda mot känd text
   python3 cwjamfor.py --syntetiskt               fallen i analystest.py morse, båda avkodarna
+  python3 cwjamfor.py fav22.wav --grupp 5        träningsgrupper om fem tecken (t.ex. FAV22)
 
 fldigi körs utan skärm: Xvfb (virtuell skärm), PulseAudio med en "null sink" som ljudkort
 och fjärrstyrning via XML-RPC. Ljudet spelas upp i realtid, så ett klipp på en minut tar
@@ -105,12 +106,14 @@ def skriv_wav(p, a, fs=LJUD_FS):
 # ════════════════════════════════════════════════════════════════════
 # Avkodarna
 # ════════════════════════════════════════════════════════════════════
-def signalspanaren(z, fs, bit=0.35):
+def signalspanaren(z, fs, bit=0.35, grupp=None):
     # 2 s svagt brus efter klippet, så att de sista tecknen hinner skrivas ut (som ggmorse gör)
     rng = np.random.default_rng(0)
     sv = float(np.sqrt(np.mean(np.abs(z) ** 2))) * 1e-3 + 1e-9
     z = np.concatenate((z, (sv * (rng.standard_normal(2 * fs) + 1j * rng.standard_normal(2 * fs))).astype(np.complex64)))
-    d = analys.CwAvkodare()
+    d = analys.CwGruppAvkodare() if grupp else analys.CwAvkodare()
+    if grupp:
+        d.GRUPP = grupp
     c = int(bit * fs)
     ut = "".join(d.feed(z[i:i + c], fs, {"fam": "OOK"}) for i in range(0, len(z), c))
     return " ".join(ut.split()), d
@@ -215,7 +218,7 @@ def jamfor_fil(args):
         reell = not iq
     z, f0 = till_basband(x, fs, reell)
     print(f"{os.path.basename(p)}: {len(x) / fs:.0f} s, {fs} Hz, CW-ton {f0:+.0f} Hz")
-    ss, d = signalspanaren(z, fs)
+    ss, d = signalspanaren(z, fs, grupp=args.grupp)
     print(f"\nSignalspanaren ({', '.join(v for _, v in d.varden())}):\n  {ss}")
     fl = None
     if not args.utan_fldigi:
@@ -249,20 +252,21 @@ def jamfor_syntetiskt(args):
     tot_s = tot_f = 0.0
     for namn, kw in analystest.MORSE_FALL:
         kw = dict(kw)
-        fs, chunk = kw.pop("fs", 8000), kw.pop("chunk", 0.35)
+        fs, chunk, grupp = kw.pop("fs", 8000), kw.pop("chunk", 0.35), kw.pop("grupp", None)
+        text = analystest.GRUPP_TEXT if grupp else analystest.MORSE_TEXT
         rng = np.random.default_rng(args.seed)
-        nyckel = analystest.morse_nyckel(analystest.MORSE_TEXT + " " + analystest.MORSE_TEXT,
+        nyckel = analystest.morse_nyckel(text + " " + text,
                                          kw.pop("wpm"), kw.pop("fw", None), kw.pop("jitter", 0.0),
                                          kw.pop("dash", 3.0), rng)
         z = analystest.morse_signal(nyckel, fs, kw.pop("snr", 20), rng, **kw)
-        ss, _ = signalspanaren(z, fs, chunk)
-        es = analystest.morse_fel(analystest.MORSE_TEXT, ss)
+        ss, _ = signalspanaren(z, fs, chunk, grupp)
+        es = analystest.morse_fel(text, ss)
         tot_s += es
         rad = f"{namn:26} {es * 100:13.1f} %"
         if har_fl:
             # fldigi får samma signal förskjuten till sin tonfrekvens (vid sidan-fallen behåller förskjutningen)
             fl = f.avkoda(till_ljud(z, fs))
-            ef = analystest.morse_fel(analystest.MORSE_TEXT, fl)
+            ef = analystest.morse_fel(text, fl)
             tot_f += ef
             rad += f" {ef * 100:6.1f} %"
             if args.visa:
@@ -282,6 +286,7 @@ def main():
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--visa", action="store_true", help="visa fldigis text i den syntetiska tabellen")
     p.add_argument("--utan-fldigi", action="store_true")
+    p.add_argument("--grupp", type=int, metavar="N", help="träningsgrupper om N tecken (lagar delade tecken)")
     args = p.parse_args()
     if args.syntetiskt:
         return jamfor_syntetiskt(args)

@@ -1530,6 +1530,34 @@ def _kmeans1d(x, init, iters=12):
     return c, np.bincount(lab, minlength=len(c))
 
 
+def laga_grupp(tecken, n):
+    """Lagar en träningsgrupp som ska ha n tecken. tecken = [[symbol, paus efter], …].
+
+    För många tecken: ett fädningsavbrott har delat ett tecken i två (T + M = O). De två
+    intilliggande tecken med kortast paus emellan vars symboler tillsammans är ett giltigt
+    tecken slås ihop. För få: ett okänt tecken (två tecken där pausen försvann) delas i två
+    giltiga. Returnerar listan med symboler."""
+    t = [[s, g] for s, g in tecken]
+    while len(t) > n:
+        kand = [(t[i][1], i) for i in range(len(t) - 1) if t[i][0] + t[i + 1][0] in MORSE]
+        if not kand:
+            break
+        _, i = min(kand)
+        t[i:i + 2] = [[t[i][0] + t[i + 1][0], t[i + 1][1]]]
+    while len(t) < n:
+        for i, (s, g) in enumerate(t):
+            if s in MORSE:
+                continue
+            delar = [k for k in range(1, len(s)) if s[:k] in MORSE and s[k:] in MORSE]
+            if delar:
+                k = min(delar, key=lambda k: abs(k - len(s) / 2))
+                t[i:i + 1] = [[s[:k], 0.0], [s[k:], g]]
+                break
+        else:
+            break
+    return [s for s, _ in t]
+
+
 class CwAvkodare(Avkodare):
     """Morse i tre steg:
 
@@ -1574,6 +1602,8 @@ class CwAvkodare(Avkodare):
         self.gap = 0.0               # pågående paus i sekunder (inkl. ihopslagna störtoppar)
         self.bridge = 0.0            # kort avbrott inne i en ton
         self.sym = ""
+        self.ordet = []              # tecknen i pågående grupp: [symbol, paus efter]
+        self.vantar = []             # en kort grupp som kanske fortsätter i nästa (gruppläge)
         self.space_done = True
         self.dot = None
         self.dash = None
@@ -1716,7 +1746,9 @@ class CwAvkodare(Avkodare):
                 self._toem_ko(o)
                 self._commit_mark()
                 if self.sym:
-                    o.append(MORSE.get(self.sym, "*"))
+                    self._tecken(self.sym, o)
+                    self.sym = ""
+                self._ord_slut(o, mellanslag=False)
                 ut = "".join(o)
             self.state, self.run = bool(key[-1]), 0
             self.pend, self.bridge, self.gap, self.sym = None, 0.0, 0.0, ""
@@ -1833,12 +1865,51 @@ class CwAvkodare(Avkodare):
             self._commit_mark()
         c, w = self._thr()
         if self.sym and g >= c:
-            out.append(MORSE.get(self.sym, "*"))
+            self._tecken(self.sym, out)
             self.sym = ""
             self.space_done = False
+        if self.ordet:
+            self.ordet[-1][1] = g            # pausen efter tecknet (växer tills den tar slut)
         if not self.sym and not self.space_done and g >= w:
-            out.append(" ")
+            self._ord_slut(out)
             self.space_done = True
+        if self.GRUPP and self.vantar and g >= 2.5 * w:     # sändningen tog slut: ingen fortsättning
+            out.append(self._grupp_text(self.vantar) + " ")
+            self.vantar = []
+
+    # ── tecken och ord ut ─────────────────────────────────────────────
+    GRUPP = None       # träningsgrupper: antal tecken per grupp (None = vanlig text)
+
+    def _tecken(self, sym, out):
+        if self.GRUPP:
+            self.ordet.append([sym, 0.0])    # skrivs när gruppen är slut (kan behöva lagas)
+            if len(self.ordet) > 2 * self.GRUPP:
+                self._ord_slut(out, mellanslag=False)
+        else:
+            out.append(MORSE.get(sym, "*"))
+
+    def _ord_slut(self, out, mellanslag=True):
+        if not self.GRUPP:
+            if mellanslag:
+                out.append(" ")
+            return
+        cur, self.ordet = self.ordet, []
+        v = self.vantar
+        # en grupp som fädning delat (ett teckenmellanrum som blev ett ordmellanrum): två
+        # grupper som tillsammans har högst GRUPP tecken hör ihop
+        if v and cur and len(v) + len(cur) <= self.GRUPP:
+            self.vantar = v + cur
+            cur = []
+        elif cur:
+            if v:
+                out.append(self._grupp_text(v) + " ")
+            self.vantar = cur
+        if self.vantar and (len(self.vantar) >= self.GRUPP or not mellanslag):
+            out.append(self._grupp_text(self.vantar) + (" " if mellanslag else ""))
+            self.vantar = []
+
+    def _grupp_text(self, t):
+        return "".join(MORSE.get(x, "*") for x in laga_grupp(t, self.GRUPP))
 
     def _commit_mark(self):
         if self.pend is None:
@@ -1927,7 +1998,18 @@ class CwAvkodare(Avkodare):
         return v
 
 
-AVKODARE = [RttyAvkodare, CwAvkodare]   # fler läggs till längst ner (analysavkodare.py)
+class CwGruppAvkodare(CwAvkodare):
+    """Morse med träningsgrupper om fem tecken (t.ex. FAV22): grupper med fel antal tecken
+    lagas (ett tecken som fädning delat i två slås ihop). Väljs i avkodarlistan, aldrig
+    automatiskt – i vanlig text skulle lagningen göra fel."""
+    namn = "Morse – träningsgrupper (5 tecken)"
+    GRUPP = 5
+
+    def passar(self, feat):
+        return False
+
+
+AVKODARE = [RttyAvkodare, CwAvkodare, CwGruppAvkodare]   # fler läggs till längst ner (analysavkodare.py)
 
 
 # ════════════════════════════════════════════════════════════════════

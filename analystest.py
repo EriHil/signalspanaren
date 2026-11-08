@@ -400,7 +400,11 @@ MORSE_FALL = [
     ("fs 12 kHz, 0,1 s bitar", dict(wpm=22, fs=12000, chunk=0.1)),
     ("Flutter 5 Hz (som FAV22)", dict(wpm=24, fd=5, rice=1.0, snr=12)),
     ("Flutter 10 Hz, djup", dict(wpm=24, fd=10, rice=0.3, snr=12)),
+    ("Grupper, flutter 5 Hz", dict(wpm=24, fd=5, rice=1.0, snr=12, grupp=5)),
 ]
+# träningsgrupper om fem slumpade bokstäver (som FAV22)
+GRUPP_TEXT = "QWJXE PLOIU WZBQI ENBUD MKRTA YHGVC OSDFN LXPZE BTRWQ IUJKM VCNAS DGHEY"
+
 
 
 def morse_nyckel(text, wpm, fw=None, jitter=0.0, dash=3.0, rng=None):
@@ -455,14 +459,15 @@ def morse_fel(facit, fick):
 
 
 def morse_kor(wpm, fs=8000, snr=20, fw=None, jitter=0.0, dash=3.0, off=0.0, qsb=0.0, chunk=0.35, seed=1,
-              fd=0.0, rice=1.0):
+              fd=0.0, rice=1.0, grupp=None):
     rng = np.random.default_rng(seed)
+    text = GRUPP_TEXT if grupp else MORSE_TEXT
     # texten sänds två gånger: det andra varvet mäts, när avkodaren har lärt sig takten
-    z = morse_signal(morse_nyckel(MORSE_TEXT + " " + MORSE_TEXT, wpm, fw, jitter, dash, rng), fs, snr, rng, off, qsb, fd, rice)
-    d = analys.CwAvkodare()
+    z = morse_signal(morse_nyckel(text + " " + text, wpm, fw, jitter, dash, rng), fs, snr, rng, off, qsb, fd, rice)
+    d = analys.CwGruppAvkodare() if grupp else analys.CwAvkodare()
     c = int(chunk * fs)
     ut = "".join(d.feed(z[i:i + c], fs, {"fam": "OOK"}) for i in range(0, len(z), c))
-    return morse_fel(MORSE_TEXT, " ".join(ut.split())), " ".join(ut.split()), d
+    return morse_fel(text, " ".join(ut.split())), " ".join(ut.split()), d
 
 
 def morse(args):
