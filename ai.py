@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """AI-chatt för signalanalysen. Standard: gratis online-AI utan nyckel (Pollinations).
-Valbart: Groq, Gemini och OpenRouter med egen API-nyckel, samt Claude med egen API-nyckel.
-Nycklarna sparas med filrättigheter 600 och loggas aldrig."""
+Valbart: Groq, Gemini och OpenRouter med egen API-nyckel. Alla val har en gratisnivå;
+modeller som kräver betalning finns inte med. Nycklarna sparas med filrättigheter 600 och loggas aldrig."""
 import json
 import os
 import re
@@ -9,31 +9,39 @@ import urllib.error
 import urllib.request
 
 GRATIS_URL = "https://text.pollinations.ai/openai"
-CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-STANDARD = {"aktiv": True, "backend": "gratis", "gratis_modell": "openai", "claude_modell": "", "api_key": "",
+STANDARD = {"aktiv": True, "backend": "gratis", "gratis_modell": "openai",
             "groq_modell": "openai/gpt-oss-20b", "groq_api_key": "",
             "gemini_modell": "gemini-3.8-flash", "gemini_api_key": "",
-            "openrouter_modell": "qwen/qwen3.6-plus-preview:free", "openrouter_api_key": ""}
+            "openrouter_modell": "nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter_api_key": ""}
 NAMN = {"gratis": "Gratis (Pollinations)", "groq": "Groq", "gemini": "Gemini",
-        "openrouter": "OpenRouter", "claude": "Claude"}
-# Modellerna i listan i chatten. Claude saknas här: modell-ID anges i inställningarna.
+        "openrouter": "OpenRouter"}
+# Endast gratismodeller. Modeller som kräver betalning finns inte med i listan.
 MODELLER = {"gratis": ["openai"],
             "groq": ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
             "gemini": ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
-            "openrouter": ["qwen/qwen3.6-plus-preview:free"],
-            "claude": []}
+            "openrouter": ["nvidia/nemotron-3-ultra-550b-a55b:free",
+                           "recursive/flint-v1.0:free",
+                           "nvidia/nemotron-3.5-super-vl:free",
+                           "dots-studio/dots-3-note-preview:free",
+                           "cohere/north-mini-code:free",
+                           "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+                           "liquid/lfm-2.5-2.6b:free",
+                           "nvidia/nemotron-3.5-lightning:free",
+                           "liquid/lfm-3-1.7b:free",
+                           "xingchen-agi/xing4.0-29b-a4b:free",
+                           "google/gemma-4-26b-a4b-it:free",
+                           "google/gemma-4-31b-it:free"]}
 INFO = {"gratis": "Ingen nyckel krävs. Ett svar åt gången, ungefär var 30–45 s. Analysdata skickas till Pollinations.",
         "groq": "Gratis API-nyckel från console.groq.com, ingen betalmetod krävs för gratisnivån. "
                 "Analysdata skickas till Groq.",
         "gemini": "Gratis API-nyckel från aistudio.google.com. Gratisnivån får användas för att förbättra Googles "
                   "produkter, så skicka inget känsligt. Analysdata skickas till Google.",
-        "openrouter": "Gratis API-nyckel från openrouter.ai. qwen/qwen3.6-plus-preview:free är en gratis "
-                      "förhandsversion, och dess data kan användas för att förbättra modellen. "
-                      "Analysdata skickas till OpenRouter.",
-        "claude": "Kräver din API-nyckel och krediter hos Anthropic. Analysdata skickas till Anthropic."}
+        "openrouter": "Gratis API-nyckel från openrouter.ai. Listan innehåller bara gratismodeller; en del kan "
+                      "vara tillfälligt upptagna (HTTP 429). Data från gratismodellerna kan användas för att "
+                      "förbättra modellerna, så skicka inget känsligt. Analysdata skickas till OpenRouter."}
 SYSTEM = ("Du är en assistent i programmet Signalspanaren för radioanalys. Svara på svenska och var tydlig med "
           "vad som är mätt och vad som är en gissning. Klassa aldrig en signal som säker utan tydliga belägg. "
           "När användaren och du är överens om vilken signal det är, avsluta svaret med en egen rad som börjar med FÖRSLAG= "
@@ -47,7 +55,10 @@ def las_config(sokvag):
             d = json.load(fh)
     except (OSError, ValueError):
         d = {}
-    return {**STANDARD, **{k: v for k, v in d.items() if k in STANDARD}}
+    cfg = {**STANDARD, **{k: v for k, v in d.items() if k in STANDARD}}
+    if cfg.get("backend") not in NAMN:
+        cfg["backend"] = "gratis"
+    return cfg
 
 
 def spara_config(sokvag, cfg):
@@ -91,8 +102,8 @@ def systemprompt(analys=None):
 
 
 def nyckel_falt(backend):
-    """Config-nyckeln för leverantörens API-nyckel. Claude använder den äldre nyckeln api_key."""
-    return "api_key" if backend == "claude" else f"{backend}_api_key"
+    """Config-nyckeln för leverantörens API-nyckel."""
+    return f"{backend}_api_key"
 
 
 def val_modeller(cfg):
@@ -102,8 +113,6 @@ def val_modeller(cfg):
         m = cfg.get(f"{b}_modell") or ""
         if m and (b, m) not in val:
             val.append((b, m))
-    if not any(b == "claude" for b, _ in val):
-        val.append(("claude", ""))
     return val
 
 
@@ -135,15 +144,6 @@ def svar(cfg, meddelanden, system):
     """Skickar chatten till vald backend och returnerar svaret som text."""
     if not cfg.get("aktiv", True):
         raise RuntimeError("AI-chatten är avstängd (slå på den under inställningar)")
-    if cfg.get("backend") == "claude":
-        if not cfg.get("api_key"):
-            raise RuntimeError("ingen API-nyckel för Claude (ställ in den under inställningar)")
-        if not cfg.get("claude_modell"):
-            raise RuntimeError("ange en Claude-modell under inställningar")
-        d = _post(CLAUDE_URL, {"model": cfg["claude_modell"], "max_tokens": 1024, "system": system,
-                               "messages": meddelanden},
-                  {"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01"})
-        return "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
     if cfg.get("backend") in ("groq", "gemini", "openrouter"):
         b = cfg["backend"]
         nyckel = cfg.get(nyckel_falt(b), "")

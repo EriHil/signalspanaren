@@ -2,6 +2,10 @@
 
 ## Att göra
 
+- [ ] **Granska de 31 osäkra facitklippen.** Bildserie genererad 2026-11-08 i
+  `~/.local/share/signalspanaren/facit-klipp/osakra-bilder/` (6 bilder, 6 klipp per bild,
+  `index.json`). Öppnas inte automatiskt. Efter beslut:
+  `python3 bibliotek.py godkänn <bildmapp> facit|osakra|utan <nr> ...`.
 - [ ] **Anonym delning av klassningar.** Valbart vid installation, avstängt som standard.
   - Skickas: mätvärden och vald signaltyp. Aldrig klartext, anteckningar, plats eller tid.
   - Ingen identitet går till GitHub.

@@ -5272,7 +5272,7 @@ def run_gui(args):
 
         def _open_ai_settings(self):
             cfg = ai.las_config(self._ai_cfg_sokv())
-            ordning = ["gratis", "groq", "gemini", "openrouter", "claude"]
+            ordning = ["gratis", "groq", "gemini", "openrouter"]
             win = Adw.Window(title="Inställningar för AI", transient_for=self.win, default_width=460)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             box.set_margin_start(12)
@@ -5280,8 +5280,7 @@ def run_gui(args):
             box.set_margin_top(12)
             box.set_margin_bottom(12)
             dd = Gtk.DropDown.new_from_strings(["Gratis (Pollinations, ingen nyckel)", "Groq (gratis API-nyckel)",
-                                                "Gemini (gratis API-nyckel)", "OpenRouter (gratis API-nyckel)",
-                                                "Claude (egen API-nyckel)"])
+                                                "Gemini (gratis API-nyckel)", "OpenRouter (gratis API-nyckel)"])
             modell = Gtk.Entry(placeholder_text="modell-ID")
             key = Gtk.Entry(visibility=False, placeholder_text="API-nyckel")
             info = Gtk.Label(xalign=0, wrap=True, css_classes=["dim-label"])

@@ -176,7 +176,9 @@ def analystest_las(base):
 
 def forslag(z, rate, off, bredd):
     """Var signalen faktiskt ligger: analysens bandbreddsmätning kring den förväntade mitten.
-    Returnerar (mitt_off, bredd) eller None."""
+    Returnerar (mitt_off, bredd) eller None. Klipp utan känd bredd söker 0–3000 Hz."""
+    if not bredd:
+        bredd = [0, 3000]
     t = np.arange(len(z)) / rate
     zz = (np.asarray(z, np.complex64) * np.exp(-2j * np.pi * off * t)).astype(np.complex64)
     n = int(rate * 4)
@@ -266,11 +268,13 @@ def bilder(args):
             z, rate = analystest_las(base)
             mitt = float(meta["captures"][0]["core:frequency"])
             off = float(facit["frekvens"]) - mitt
-            fs_ = forslag(z, rate, off, facit["bredd"])
+            bredd = facit.get("bredd")
+            bredd_txt = f"{bredd[0]}–{bredd[1]} Hz" if bredd else "bredd okänd"
+            fs_ = forslag(z, rate, off, bredd)
             fl_txt = "inget förslag" if fs_ is None else f"förslag {fs_[0] - off:+.0f} Hz, {fs_[1]:.0f} Hz bred"
-            _rita_klipp(ctx, 0, j * H, W, H - 4, z, rate, off, facit["bredd"][1],
+            _rita_klipp(ctx, 0, j * H, W, H - 4, z, rate, off, bredd[1] if bredd else 3000,
                         f"{s + j}: {facit['namn'][:40]} — väntat {'/'.join(facit['fam'])}, "
-                        f"{facit['bredd'][0]}–{facit['bredd'][1]} Hz — {fl_txt}  (±{rate / 2000:.0f} kHz)", fs_)
+                        f"{bredd_txt} — {fl_txt}  (±{rate / 2000:.0f} kHz)", fs_)
             index[str(s + j)] = {"fil": base, "forslag": fs_, "mitt": mitt}
         surf.write_to_png(os.path.join(args.utmapp, f"granska_{s // per:03d}.png"))
     with open(os.path.join(args.utmapp, "index.json"), "w", encoding="utf-8") as fh:
