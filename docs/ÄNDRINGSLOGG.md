@@ -49,6 +49,9 @@
 - **Rättat: KiwiSDR-mottagningen stannade när Kiwi stängde anslutningen.** Nu försöker appen återansluta efter 5, 15 och 30 sekunder och visar det i en notis. Kiwins DX-flaggor hämtas bara när ingen lyssnar, eftersom en samtidig hämtning kopplade ner ljudet. Flaggorna hämtas på ungefär fyra sekunder, och ljudet startar en sekund senare.
 - **Snabbare analys vid klick.** Ett klick på en signal visar ett första resultat efter ungefär en halv sekund, med en gissad bandbredd. Bandbreddsmätningen förfinar resultatet efteråt, och rubriken visar ”mäter bandbredd …” under tiden.
 
+- **Analysrutan står still.** Mätvärdesrutan visar alltid samma rader i samma ordning. Saknas ett värde visas ett dämpat streck, i stället för att raden försvinner. Signaltypen står på en egen rad överst. Raden förkortas om den inte ryms, och hela texten finns i tooltip. Kolumnerna har fast bredd. Deviation, AM-grad och subton delar raden Modulation. Avkodarens värden står på raderna Avkodare och Avkodare, mer. I signaltyp-rutan till höger står rullistan och Redigera alltid kvar, bredvid varandra.
+- **Frekvensfördelning är standarddiagram** i diagramrutan i stället för Automatiskt.
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

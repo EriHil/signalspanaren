@@ -4282,12 +4282,14 @@ def run_gui(args):
                 self.area.queue_draw()
 
     class AnalysPanel(Gtk.Box):
-        ROWS = [("klass", "Signaltyp"), ("freq", "Frekvens (mitt)"), ("avv", "Avvikelse från mål"),
+        # Fasta rader i fast ordning – de visas alltid (med "–" när värdet saknas), så att rutan inte
+        # byter storlek eller disposition när analysen tolkar signalen olika från steg till steg.
+        ROWS = [("freq", "Frekvens (mitt)"), ("avv", "Avvikelse från mål"),
                 ("snr", "SNR"), ("occ", "Upptagen bandbredd"), ("baud", "Symboltakt"), ("ram", "Ramperiod"),
-                ("shift", "Shift / tonavstånd"), ("toner", "Antal toner"), ("ljud", "Ljudfrekvens (USB/LSB)"),
-                ("dev", "Deviation"), ("am", "Modulationsgrad"), ("ctcss", "Subton (CTCSS)"),
-                ("skur", "Sändningsmönster"), ("env", "Envelopvariation"), ("trafik", "Trafik"),
-                ("avk1", ""), ("avk2", ""), ("avk3", "")]
+                ("shift", "Shift / tonavstånd"), ("toner", "Antal toner"), ("ljud", "Ljudfrekvens"),
+                ("mod", "Modulation"), ("skur", "Sändningsmönster"), ("env", "Envelopvariation"),
+                ("trafik", "Trafik"), ("avk1", "Avkodare"), ("avk2", "Avkodare, mer")]
+        TITEL_BREDD = max(len(t) for _k, t in ROWS)
 
         def __init__(self, win):
             super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -4372,19 +4374,30 @@ def run_gui(args):
             self.grid = grid
             self._cols = 0
             for key, title in self.ROWS:
-                l1 = Gtk.Label(label=title, xalign=0, valign=Gtk.Align.START)
+                # fast bredd på både rubrik och värde: kolumnerna flyttar sig inte när texten ändras
+                l1 = Gtk.Label(label=title, xalign=0, width_chars=self.TITEL_BREDD)
                 l1.add_css_class("dim-label")
-                l2 = Gtk.Label(label="–", xalign=0, hexpand=True, selectable=True, wrap=True)
-                l2.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-                l2.add_css_class("analys-klass" if key == "klass" else "monospace")
+                l2 = Gtk.Label(label="–", xalign=0, hexpand=True, selectable=True, width_chars=12,
+                               max_width_chars=12, ellipsize=Pango.EllipsizeMode.END)
+                l2.add_css_class("monospace")
                 self.cells[key] = (l1, l2)
             self._layout_cells(2)
+            # signaltypen på en egen rad över mätvärdena – alltid en rad, hela texten i tooltip
+            self.klass_lbl = Gtk.Label(label="–", xalign=0, selectable=True, ellipsize=Pango.EllipsizeMode.END)
+            self.klass_lbl.add_css_class("analys-klass")
+            self.klass_lbl.set_margin_bottom(4)
             sw = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True)
             sw.set_overlay_scrolling(False)      # synlig rullist när alla mätvärden inte ryms
             sw.set_size_request(-1, 60)
             sw.set_child(grid)
+            grid.remove_css_class("analys-ram")
+            cbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            cbox.add_css_class("analys-ram")
+            cbox.append(self.klass_lbl)
+            cbox.append(sw)
             self.cells_sw = sw
-            left.set_end_child(sw)
+            self.cells_box = cbox
+            left.set_end_child(cbox)
             left.set_resize_end_child(False)
             left.set_shrink_end_child(False)
             left.set_position(160)
@@ -4411,9 +4424,9 @@ def run_gui(args):
             dhdr.append(Gtk.Label(label="Diagram", xalign=0, hexpand=True, css_classes=["dim-label"]))
             self.diag_dd = Gtk.DropDown.new_from_strings(list(AnalysDiagram.NAMN))
             self.diag_dd.set_tooltip_text("Välj diagram – Automatiskt växlar efter signaltyp")
-            vald = win.conf.get("analys_diagram", "Automatiskt")
+            vald = win.conf.get("analys_diagram", "Frekvensfördelning")
             if vald not in AnalysDiagram.NAMN:
-                vald = "Automatiskt"
+                vald = "Frekvensfördelning"
             self.diag.sel = vald
             self.diag_dd.set_selected(AnalysDiagram.NAMN.index(vald))
             self.diag_dd.connect("notify::selected", self._on_diag)
@@ -4426,26 +4439,27 @@ def run_gui(args):
             right.set_shrink_start_child(False)
             info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             typbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            self.kand = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
+            self.kand = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True, lines=4,
+                                  ellipsize=Pango.EllipsizeMode.END)
+            self.kand.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
             self.kand.add_css_class("analys-ram")
             self.kand.set_markup("<b>Signaltyp</b>\n–")
             typbox.append(self.kand)
-            self.klassa_btn = Gtk.Button(label="✎ Redigera …", halign=Gtk.Align.START)
+            self.klassa_btn = Gtk.Button(label="✎ Redigera …")
             self.klassa_btn.set_tooltip_text("Spara din egen bedömning som en flagga på frekvensen – den visas sedan "
                                              "som signaltyp i stället för analysens gissning")
             self.klassa_btn.add_css_class("flat")
             self.klassa_btn.connect("clicked", lambda *_: self._klassa_sjalv())
-            self.klassa_btn.set_visible(False)
-            typbox.append(self.klassa_btn)
-            self.alt_dd = Gtk.DropDown.new_from_strings(["Andra möjliga"])
-            self.alt_dd.set_tooltip_text("Andra möjliga signaltyper – välj en för att se vad den innebär")
-            self.alt_dd.set_visible(False)
+            self.klassa_btn.set_sensitive(False)
+            self.alt_dd = Gtk.DropDown.new_from_strings(["Automatiskt (analysen)"])
+            self.alt_dd.set_tooltip_text("Välj signaltyp – Automatiskt låter analysen bestämma")
+            self.alt_dd.set_hexpand(True)
+            self.alt_dd.set_sensitive(False)
             self.alt_dd.connect("notify::selected", self._on_typ)
-            typbox.append(self.alt_dd)
-            self.alt = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
-            self.alt.add_css_class("analys-ram")
-            self.alt.set_visible(False)
-            typbox.append(self.alt)
+            valrad = Gtk.Box(spacing=4)          # rullista och Redigera på samma rad, alltid synliga
+            valrad.append(self.alt_dd)
+            valrad.append(self.klassa_btn)
+            typbox.append(valrad)
             self._typ_key, self._typ_items, self._typ_busy = None, [], False
             sw_typ = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, min_content_height=110)
             sw_typ.set_overlay_scrolling(False)
@@ -4528,7 +4542,8 @@ def run_gui(args):
             mx = lp.get_property("max-position")
             if self._left_user or mx <= 0 or lp.get_width() < 50:
                 return False
-            _m, nat = self.cells_sw.get_child().measure(Gtk.Orientation.VERTICAL, lp.get_width())[:2]
+            _m, nat = self.klass_lbl.measure(Gtk.Orientation.VERTICAL, lp.get_width())[:2]
+            nat += self.cells_sw.get_child().measure(Gtk.Orientation.VERTICAL, lp.get_width())[1] + 18
             pos = max(90, mx - nat - 2)
             if pos != lp.get_position():
                 lp.set_position(pos)
@@ -4756,20 +4771,27 @@ def run_gui(args):
                 adj = self.info_sw.get_vadjustment()
                 GLib.idle_add(lambda: adj.set_value(adj.get_upper()) or False)
 
-        def _set(self, key, val, title=None):
-            l1, l2 = self.cells[key]
-            show = val not in (None, "", "–")
-            l1.set_visible(show)
-            l2.set_visible(show)
-            if show:
-                l2.set_text(str(val))
-                if title is not None:
-                    l1.set_text(title)
+        def _set(self, key, val):
+            """Raden står alltid kvar; saknat värde visas som ett dämpat streck."""
+            _l1, l2 = self.cells[key]
+            txt = str(val) if val not in (None, "", "–") else "–"
+            if l2.get_text() != txt:
+                l2.set_text(txt)
+                l2.set_tooltip_text(txt if txt != "–" else None)
+            if txt == "–":
+                l2.add_css_class("dim-label")
+            else:
+                l2.remove_css_class("dim-label")
+
+        def _set_klass(self, txt):
+            if self.klass_lbl.get_text() != txt:
+                self.klass_lbl.set_text(txt)
+                self.klass_lbl.set_tooltip_text(txt)
 
         def traffic(self, r):
             fam = r.get("fam")
             if time.time() - self.text_t < 15:
-                return "Klartext – avkodas (se rutan till höger)"
+                return "Klartext avkodas →"
             if fam in ("AM", "FM", "SSB"):
                 return ("Analogt tal/ljud – okrypterat, tryck Lyssna" if r.get("ljudvariation", 0) > 2.5
                         else "Analog – ingen tydlig talaktivitet just nu")
@@ -4843,8 +4865,11 @@ def run_gui(args):
             self._typ_busy = True
             try:
                 if not visa:
-                    self.alt_dd.set_visible(False)
-                    self.alt.set_visible(False)
+                    if self._typ_key is not None:
+                        self.alt_dd.set_model(Gtk.StringList.new(["Automatiskt (analysen)"]))
+                        self._typ_items = []
+                    self.alt_dd.set_selected(0)
+                    self.alt_dd.set_sensitive(False)
                     self._typ_key = None
                     return
                 key = (shown["namn"] if shown else None, op.get("namn") if op else None)
@@ -4871,15 +4896,7 @@ def run_gui(args):
                 if op is not None:
                     idx = next((k + 1 for k, (n, _e) in enumerate(self._typ_items) if n == op.get("namn")), 0)
                 self.alt_dd.set_selected(idx)
-                self.alt_dd.set_visible(True)
-                e = self._typ_items[idx - 1][1] if idx > 0 else None
-                if e is not None:
-                    esc = GLib.markup_escape_text
-                    self.alt.set_markup(f"<b>{esc(e['namn'])}</b> <span alpha='70%'>{esc(e.get('kat', ''))}</span>\n"
-                                        f"<span size='small' alpha='75%'>{esc(e.get('info', ''))}</span>")
-                    self.alt.set_visible(True)
-                else:
-                    self.alt.set_visible(False)
+                self.alt_dd.set_sensitive(True)
             finally:
                 self._typ_busy = False
 
@@ -4909,8 +4926,11 @@ def run_gui(args):
                             hist.clear()
             if op is not None:
                 state = "din klassning"
-                nm_l = f"🚩 <b>{esc(op['namn'])}</b>"
-                info_l = f"<span size='small' alpha='75%'>{esc(op.get('not') or op.get('typ', ''))}</span>"
+                e_op = next((x for x in analys.signaldb.SIGNALER if x.get("namn") == op.get("namn")), None)
+                nm_l = (f"🚩 <b>{esc(op['namn'])}</b>"
+                        + (f" <span alpha='70%'>· {esc(op['typ'])}</span>" if op.get("typ") else ""))
+                beskr = " – ".join(x for x in (op.get("not") or "", (e_op or {}).get("info", "")) if x)
+                info_l = f"<span size='small' alpha='75%'>{esc(beskr)}</span>"
             elif shown is not None:
                 e = shown["e"]
                 kat = e.get("kat", "")
@@ -4925,17 +4945,16 @@ def run_gui(args):
                 nm_l = "<span alpha='60%'>–</span>"
                 info_l = "<span size='small' alpha='60%'>väntar på en stabil signaltyp – eller välj i rullistan</span>"
             self.kand.set_markup(f"<b>Signaltyp</b> <span alpha='70%'>({state})</span>\n{nm_l}\n{info_l}")
+            self.kand.set_tooltip_markup(f"{nm_l}\n{info_l}")
             self._typ_visa(r, op, shown)
 
         def _update_rows(self, r):
-            self.klassa_btn.set_visible(bool(r and r.get("fam") not in (None, "BRUS")))
+            self.klassa_btn.set_sensitive(bool(r and r.get("fam") not in (None, "BRUS")))
             op = self._operator_flagga(r)
-            if op is not None and r and r.get("fam") not in (None,):
-                self._set("klass", f"{op['namn']} (din klassning)")
             if not r or r.get("fam") in (None, "BRUS"):
                 for key, _t in self.ROWS:
                     self._set(key, None)
-                self._set("klass", "Ingen signal" if r else "–")
+                self._set_klass("Ingen signal" if r else "–")
                 if r:
                     self._set("snr", f"{r.get('snr', 0):.1f} dB")
                 self._kand_visa(r, op)
@@ -4943,11 +4962,11 @@ def run_gui(args):
             fam = r["fam"]
             sak = r.get("sakerhet")
             if op is not None:
-                self._set("klass", f"{op['namn']} (din klassning) – analysen: {r['klass']}")
+                self._set_klass(f"{op['namn']} (din klassning) – analysen: {r['klass']}")
             elif r.get("osaker"):
-                self._set("klass", f"Osäker – klassa själv (kanske {r['klass']}, {sak * 100:.0f} %)")
+                self._set_klass(f"Osäker – kanske {r['klass']} ({sak * 100:.0f} %)")
             else:
-                self._set("klass", r["klass"] + (f" ({sak * 100:.0f} % säker)" if sak is not None else ""))
+                self._set_klass(r["klass"] + (f" ({sak * 100:.0f} % säker)" if sak is not None else ""))
             self._set("freq", f"{fmt_mhz(r['f_abs'])} MHz")
             self._set("avv", _fmt_hz(r.get("f_mid"), True))
             self._set("snr", f"{r.get('snr', 0):.1f} dB (topp {r.get('peak_snr', 0):.0f})")
@@ -4959,9 +4978,14 @@ def run_gui(args):
             self._set("toner", r.get("toner") if r.get("toner") else None)
             ac = r.get("ljud_mitt")
             self._set("ljud", f"{ac:.0f} Hz" if ac else None)
-            self._set("dev", f"±{_fmt_hz(r.get('deviation'))}" if fam == "FM" else None)
-            self._set("am", f"{r.get('am_djup', 0) * 100:.0f} %" if fam == "AM" else None)
-            self._set("ctcss", f"{r['ctcss']:.1f} Hz" if r.get("ctcss") else None)
+            mod = []
+            if fam == "FM":
+                mod.append(f"dev ±{_fmt_hz(r.get('deviation'))}")
+            if fam == "AM":
+                mod.append(f"AM-grad {r.get('am_djup', 0) * 100:.0f} %")
+            if r.get("ctcss"):
+                mod.append(f"subton {r['ctcss']:.1f} Hz".replace(".", ","))
+            self._set("mod", ", ".join(mod) or None)
             self._set("skur", f"skurar ({r.get('duty', 0) * 100:.0f} % på)" if r.get("skurar") else "kontinuerlig")
             self._set("env", f"{r.get('cv', 0):.2f}")
             rm = r.get("ram_ms")
@@ -4972,12 +4996,9 @@ def run_gui(args):
             else:
                 self._set("ram", None)
             self._set("trafik", self.traffic(r))
-            vals = r.get("avk_varden") or []
-            for i, key in enumerate(("avk1", "avk2", "avk3")):
-                if i < len(vals):
-                    self._set(key, vals[i][1], vals[i][0])
-                else:
-                    self._set(key, None)
+            vals = [f"{t}: {v}" for t, v in (r.get("avk_varden") or [])]
+            self._set("avk1", vals[0] if vals else None)
+            self._set("avk2", " · ".join(vals[1:]) or None)
             self._kand_visa(r, op)
 
         def _klartext_mapp(self):
@@ -5236,10 +5257,11 @@ def run_gui(args):
         def copy(self):
             r = self.last or {}
             out = [f"Signalspanaren signalanalys {time.strftime('%Y-%m-%d %H:%M:%S')}"]
+            out.append(f"Signaltyp: {self.klass_lbl.get_text()}")
             for key, title in self.ROWS:
-                l1, l2 = self.cells[key]
-                if l2.get_visible():
-                    out.append(f"{l1.get_text() or title}: {l2.get_text()}")
+                _l1, l2 = self.cells[key]
+                if l2.get_text() != "–":
+                    out.append(f"{title}: {l2.get_text()}")
             for sc, e, why in r.get("kandidater") or []:
                 out.append(f"Kandidat: {e['namn']} ({sc:.0f} %) {why}")
             txt = self.textbuf.get_text(self.textbuf.get_start_iter(), self.textbuf.get_end_iter(), False)
