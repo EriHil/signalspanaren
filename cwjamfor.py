@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 erihil
 """
-Jämför Signalspanarens Morse-avkodare med fldigi (referensavkodare) på samma signal.
+Jämför Signalspanarens Morse-avkodare med fldigi och ggmorse (referensavkodare) på samma signal.
 
   python3 cwjamfor.py klipp.wav                  ljudfil (t.ex. KiwiSDR:ns "rec" i CW/USB-läge)
   python3 cwjamfor.py klipp.sigmf-meta           IQ-klipp (t.ex. från analystest.py spela-in)
@@ -13,7 +13,8 @@ Jämför Signalspanarens Morse-avkodare med fldigi (referensavkodare) på samma 
 fldigi körs utan skärm: Xvfb (virtuell skärm), PulseAudio med en "null sink" som ljudkort
 och fjärrstyrning via XML-RPC. Ljudet spelas upp i realtid, så ett klipp på en minut tar
 en minut. Startas automatiskt om det inte redan körs (kräver paketen fldigi, xvfb,
-pulseaudio och pulseaudio-utils). Utan fldigi körs bara Signalspanarens avkodare.
+pulseaudio och pulseaudio-utils). ggmorse används om ggmorse-from-file finns i PATH.
+Utan dem körs bara Signalspanarens avkodare.
 
 Utan facit räknas överensstämmelsen mellan avkodarna: där fldigi och Signalspanaren
 ger samma text är den sannolikt rätt, och skillnaderna visas tecken för tecken.
@@ -122,6 +123,23 @@ def signalspanaren(z, fs, bit=0.35, grupp=None, mitt=None):
     return " ".join(ut.split()), d
 
 
+def ggmorse(ljud):
+    """Avkodar ljudet med ggmorse (ggmorse-from-file i PATH), eller None om det saknas."""
+    prog = shutil.which("ggmorse-from-file")
+    if not prog:
+        return None
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
+        p = fh.name
+    try:
+        skriv_wav(p, ljud)
+        o = subprocess.run([prog, p], capture_output=True, text=True, timeout=600).stdout
+    finally:
+        os.unlink(p)
+    if "[+] Decoding:" not in o:
+        return None
+    return " ".join(o.split("[+] Decoding:")[1].split("[+] Done")[0].split())
+
+
 class Fldigi:
     def __init__(self):
         self.env = dict(os.environ, XDG_RUNTIME_DIR=os.path.join(CACHE, "xdg"), DISPLAY=":97")
@@ -223,6 +241,9 @@ def jamfor_fil(args):
     print(f"{os.path.basename(p)}: {len(x) / fs:.0f} s, {fs} Hz, CW-ton {f0:+.0f} Hz")
     ss, d = signalspanaren(z, fs, grupp=args.grupp)
     print(f"\nSignalspanaren ({', '.join(v for _, v in d.varden())}):\n  {ss}")
+    gg = ggmorse(till_ljud(z, fs))
+    if gg is not None:
+        print(f"\nggmorse:\n  {gg}")
     fl = None
     if not args.utan_fldigi:
         f = Fldigi()
@@ -236,6 +257,7 @@ def jamfor_fil(args):
     if args.facit:
         facit = " ".join(args.facit.upper().split())
         print(f"Mot facit: Signalspanaren {likhet(facit, ss) * 100:.1f} %"
+              + (f", ggmorse {likhet(facit, gg) * 100:.1f} %" if gg is not None else "")
               + (f", fldigi {likhet(facit, fl) * 100:.1f} %" if fl is not None else ""))
     if fl is not None:
         print(f"Överensstämmelse Signalspanaren/fldigi: {likhet(ss, fl) * 100:.1f} %")
