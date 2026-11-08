@@ -456,9 +456,22 @@ def _vaxlar(z, fs, nfft, f1, f2):
     return float(np.corrcoef(p1, p2)[0, 1]) < -0.2
 
 
+def _barvag_exakt(z, fs, f0, sok_hz=200.0):
+    """Bärvågens frekvens exakt (≈ 1/längden Hz): starkaste toppen inom ±sok_hz från f0."""
+    z = np.asarray(z, np.complex64)
+    N = int(min(1 << 18, _pow2(len(z))))
+    X = np.abs(np.fft.fft(z[:N] * np.hanning(min(N, len(z))).astype(np.float32), N))
+    f = np.fft.fftfreq(N, 1 / fs)
+    sel = np.abs(f - f0) <= sok_hz
+    if not sel.any():
+        return f0
+    return float(f[sel][np.argmax(X[sel])])
+
+
 def _nycklad(z, fs, fc, ruta_s=0.01):
-    """Slås bärvågen vid fc av och på? Bärvågens effekt i 10 ms-rutor (smalt filter kring fc): nycklad
-    om de starka rutorna ligger minst 10 dB över de svaga. En AM-bärvåg ligger kvar hela tiden."""
+    """Slås bärvågen vid fc av och på? Bärvågens effekt i rutor (smalt filter kring fc): nycklad om de
+    starka rutorna ligger minst 10 dB över de svaga. En AM-bärvåg ligger kvar hela tiden.
+    OBS: fc måste vara exakt (några Hz) – annars roterar fasen inom rutan och medelvärdet slår av och på."""
     z = np.asarray(z, np.complex64)
     n = len(z)
     if n < fs * 0.5:
@@ -469,7 +482,20 @@ def _nycklad(z, fs, fc, ruta_s=0.01):
     m = n // k
     p = np.abs(y[:m * k].reshape(m, k).mean(axis=1)) ** 2      # medel över rutan ≈ smalt filter (~100 Hz)
     db = 10 * np.log10(p + 1e-30)
-    return float(np.percentile(db, 90) - np.percentile(db, 10)) >= 10.0
+    if ruta_s < 0.03:
+        return float(np.percentile(db, 90) - np.percentile(db, 10)) >= 10.0
+    # Med brusreferens (samma filter 150 Hz bredvid bärvågen): 2 = nycklad (av-läget är brus, de svaga
+    # rutorna når bruset), 1 = delvis (bärvågen ligger mest på men faller ibland ned till bruset – RWM
+    # mellan pulsserierna), 0 = inte (en fädande AM-bärvåg går ned 10 dB men sällan ända ned till bruset)
+    yr = z * np.exp(-2j * np.pi * (fc + 150.0) * t).astype(np.complex64)
+    pr = np.abs(yr[:m * k].reshape(m, k).mean(axis=1)) ** 2
+    brus = 10 * np.log10(float(np.median(pr)) + 1e-30)
+    nere = int(np.count_nonzero(db - brus <= 4.0))
+    if float(np.percentile(db, 90) - np.percentile(db, 10)) >= 10.0 and float(np.percentile(db, 10)) - brus <= 4.0:
+        return 2
+    if nere >= 2 and float(np.percentile(db, 90)) - brus >= 10.0:
+        return 1
+    return 0
 
 
 def _utan_lutning(f, P):
@@ -2064,7 +2090,9 @@ class Analyzer:
             # (inte heller när FSK nyss mätts: en fädad FSK-ton ser ut som en ensam nycklad bärvåg)
             if (feat.get("barvag_andel") or 0.0) >= 0.5 and not feat.get("shift") \
                     and not getattr(self, "_fsk_mem", None):
-                feat["nycklad"] = _nycklad(snap[0], snap[1], float(feat.get("f_mid") or 0.0), ruta_s=0.05)
+                nv = _nycklad(snap[0], snap[1], _barvag_exakt(snap[0], snap[1], float(feat.get("f_mid") or 0.0)),
+                              ruta_s=0.05)
+                feat["nycklad"], feat["delvis_nycklad"] = nv == 2, nv == 1
             # modemram över 3 s (STANAG 4285: 106,7 ms) – syns i brus där ett steg på 0,4 s inte räcker.
             # Bara ≥ 50 ms: talets grundton ger skenbara perioder på 20–35 ms
             if (self.tap.bw or 0) >= 1500:

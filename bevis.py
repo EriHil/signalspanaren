@@ -196,16 +196,18 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None, sedd=False):
         ge(["BRUS"], "tydlig signal", -2.0)
     # 2. bandbredd: den stabila om den finns, annars stegets
     w = bredd or feat.get("occ_bw") or 0.0
+    w_kanal = w                            # kanalens uppmätta bredd (före justeringen för nyckling nedan)
     cf0 = feat.get("barvag_andel") or 0.0
     # en bärvåg vars nivå varierar (närvaro) är modulerad: när sidbanden drunknar i bruset syns bara
     # bärvågen, och den uppmätta bredden säger då inget om AM
     modbarvag = (cf0 >= 0.5 and narv is not None and narv >= 1.5 and not feat.get("skurar")
-                 and not feat.get("nycklad"))
+                 and not feat.get("nycklad") and not feat.get("delvis_nycklad")
+                 and w <= 300.0)                               # bredare uppmätt band: inte bara en bärvåg
     if feat.get("occ_bw") and (feat.get("skurar") or raw in ("OOK", "BÄRVÅG")):
         w = min(w, feat["occ_bw"])          # nyckelklick gör kanalens uppmätta bredd för stor
     for h in HYP:
         # när bärvågen bär nästan all effekt ser bandbreddsmätningen bara den (sidbanden i bruset)
-        if h != "BRUS" and not (cf0 >= 0.5 and h == "AM"):
+        if h != "BRUS" and not (cf0 >= 0.5 and h == "AM" and w_kanal <= 300.0):
             v = _bredd_straff(h, w)
             if v:
                 ge([h], "bandbredd", 0.6 * v)
@@ -230,9 +232,15 @@ def steg_bevis(feat, f_abs, bredd, tal=None, ft=None, narv=None, sedd=False):
     if feat.get("nycklad") and raw not in DIGITAL:
         ge(["OOK"], "nycklad bärvåg", 1.5)
         ge(["AM", "BÄRVÅG", "FM"], "nycklad bärvåg", -1.5)
+    elif feat.get("delvis_nycklad") and raw not in DIGITAL:
+        ge(["OOK"], "bärvåg med avbrott", 0.8)
+        ge(["AM", "FM"], "bärvåg med avbrott", -0.8)
     if modbarvag:
+        # en bärvåg utan synliga sidband vars nivå varierar: modulerad (inte omodulerad). AM stöds bara där
+        # AM-rundradio sänds – annars kan det lika gärna vara en bärvåg med avbrott (RWM)
         ge(["BÄRVÅG"], "bärvågen varierar", -1.5)
-        ge(["AM"], "bärvågen varierar", 0.8)
+        if any(h == "AM" for h, _v, _t in bandplan(f_abs)):
+            ge(["AM"], "bärvågen varierar", 0.8)
     if cf >= 0.4 and w >= 3000 and not feat.get("skurar"):
         ge(["AM"], "bärvåg med sidband", 1.5 if (feat.get("spegel") or 0) >= 0.45 else 1.0)
         ge(DIGITAL | {"SSB"}, "stark bärvåg", -0.8)

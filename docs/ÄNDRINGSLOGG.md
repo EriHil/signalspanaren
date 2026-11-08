@@ -103,6 +103,8 @@
 
 - **MSK skyddas mot falsk PSK-synk.** På NAA (24 kHz) fick PSK31/PSK63-avkodaren falsk synk på MSK-signalen och skrev över familjen till BPSK. Nu körs PSK-avkodaren inte när MSK-linjerna syns, och en avkodares fakta får inte göra MSK till PSK. MSK godtas också när symboltakten är felmätt, om frekvensbytena har just den takten (ett byte per symbol, vilket RTTY inte har). NAA: rätt typ i 100 % av stegen (förut 29 %). Facitbiblioteket: 98 %.
 
+- **Nycklad bärvåg och fädande AM skiljs åt.** Testet för nyckling medelvärdesbildar bärvågen över 50 ms. Med en bärvågsfrekvens som låg några Hz fel roterade fasen inom rutan, och då såg en fädande AM-bärvåg nycklad ut. Bärvågen skattas nu exakt ur 3 s (0,3 Hz). Som nycklad räknas en bärvåg bara om av-läget når ned till bruset, jämfört med samma filter 150 Hz bredvid, vilket fädning sällan gör. En bärvåg som ibland faller ned till bruset ger lite stöd för OOK. Att bärvågens nivå varierar ger stöd för AM bara i rundradioband. Annars säger det bara att bärvågen inte är omodulerad, eftersom RWM utan synliga sidband ser likadan ut som svag AM. Facitbiblioteket: rätt typ i 98 % av stegen. Med 6 dB extra brus: 73 % (förut 70 %).
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:
