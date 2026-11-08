@@ -327,8 +327,20 @@ def main():
     print(f"{len(X)} klipp, {sum(len(y) for y in Y)} tecken. Tränar {a.typ} …", flush=True)
     if a.fran:
         import tensorflow as tf
-        m = tf.keras.models.load_model(a.fran, compile=False)
-        print(f"Fortsätter från {a.fran}", flush=True)
+        k = tf.keras.models.load_model(a.fran, compile=False)
+        if a.typ == "cnn" and any("lstm" in l.name for l in k.layers):
+            # CNN med förtränade faltningslager från en CRNN (de första lagren är likadana)
+            m = modell(lstm=False)
+            n = 0
+            for lm, lk in zip(m.layers, k.layers):
+                if "bidirectional" in lk.name or [w.shape for w in lm.get_weights()] != [w.shape for w in lk.get_weights()]:
+                    break
+                lm.set_weights(lk.get_weights())
+                n += 1
+            print(f"CNN: {n} lager kopierade från {a.fran}", flush=True)
+        else:
+            m = k
+            print(f"Fortsätter från {a.fran}", flush=True)
     else:
         m = modell(lstm=(a.typ == "crnn"))
     trana_ctc(m, X, Y, a.epoker, Xv, Yv, lr=a.lr)
