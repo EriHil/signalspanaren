@@ -1567,6 +1567,7 @@ class CwAvkodare(Avkodare):
         self.marks = deque(maxlen=80)
         self.spaces = deque(maxlen=120)
         self.backlog = []            # tidsavstånd innan takten är känd (spelas upp i efterhand)
+        self.rq = []                 # körningar som väntar på nästa (för ihopslagning)
         self.pend = None             # ton som väntar på beslut (ett kort avbrott kan följa)
         self.gap = 0.0               # pågående paus i sekunder (inkl. ihopslagna störtoppar)
         self.bridge = 0.0            # kort avbrott inne i en ton
@@ -1574,6 +1575,9 @@ class CwAvkodare(Avkodare):
         self.space_done = True
         self.dot = None
         self.dash = None
+        self.unit = None             # takten (en enhet) i sekunder
+        self.L_s = 0.03              # det smala filtrets längd i sekunder
+        self.f_start = 0.5           # tröskelns läge vid den pågående körningens början
         self.gaps = None             # (inom tecken, mellan tecken, mellan ord) i sekunder
         self.wpm = None
         self.fw = None               # Farnsworth: teckentakt härledd ur teckenmellanrummen
@@ -1611,8 +1615,9 @@ class CwAvkodare(Avkodare):
         self.ph = float((self.ph + 2 * np.pi * self.f0 / ra * len(y)) % (2 * np.pi))
         # smalt filter: glidande medel ~ en halv prick (5–40 ms; 20 ord/min innan takten är känd).
         # Toner kortare än filtret kan inte vara äkta – de räknas som störningar (se min_el).
-        L = int(np.clip(round((self.dot or 0.06) * 0.5 * ra), max(1, ra * 0.005), ra * 0.04))
+        L = int(np.clip(round((self.unit or 0.06) * 0.5 * ra), max(1, ra * 0.005), ra * 0.04))
         self.min_el = max(self.MIN_EL, 0.8 * L / ra)
+        self.L_s = L / ra
         yy = np.concatenate((self.acc2, y))
         if len(yy) < L:
             self.acc2 = yy
@@ -1626,34 +1631,57 @@ class CwAvkodare(Avkodare):
         self._dec = (self._dec + len(m)) % d
         return e
 
+    # nivåföljning och trösklar – inställda mot analystest.py morse (syntetiskt, känt facit) och en
+    # riktig FAV22-inspelning (jämförd med ggmorse): djup fädning vill ha låga trösklar, störningar
+    # i pauserna höga
+    T_HI = 0.04        # s, tonnivån följer tonen under nedtryckning
+    T_LO = 0.15        # s, brusnivån följer pauserna uppåt (störningar i pauserna höjer den snabbt)
+    T_LO_NED = 0.15    # s, … och nedåt
+    T_DEC = 0.7        # s, i pauser sjunker tonnivån mot bruset (glömmer gamla fädningstoppar)
+    P_ON = 0.7         # tröskel för ton på: brus·(ton/brus)^P_ON – mitt emellan i log-skala, så en
+    P_OFF = 0.6        # fädande ton 10 dB under den förra syns ändå; P_OFF = tröskel för ton av
+    F_MIN = 0.5        # men aldrig under brus + F_MIN·(ton − brus): filtret drar ut flankerna
+    LO_GRANS = 1.0     # brusnivån uppdateras bara under brus + LO_GRANS·(ton − brus)
+    GOLV = 2.5         # tonen måste vara minst så här många gånger brusnivån
+
     def _key(self, e):
         """Envelop → nyckelläge. Ton- och brusnivån följs element för element (klarar fädning, QSB),
-        tröskeln ligger mitt emellan med hysteres och aldrig nära brusets egen nivå."""
+        tröskeln ligger mellan dem med hysteres och aldrig nära brusets egen nivå."""
         if self.lvl_hi is None:
             self.lvl_hi = float(np.percentile(e, 95))
             self.lvl_lo = float(np.percentile(e, 10))
         R = self.RATE
-        a_on = 1 - math.exp(-1 / (R * 0.04))      # följer tonens nivå (40 ms)
-        a_off = 1 - math.exp(-1 / (R * 0.15))     # följer brusets nivå (150 ms)
-        a_dec = 1 / (R * 2.0)                     # utan toner sjunker tonnivån mot bruset (~2 s)
+        a_on = 1 - math.exp(-1 / (R * self.T_HI))
+        a_off = 1 - math.exp(-1 / (R * self.T_LO))
+        a_ned = 1 - math.exp(-1 / (R * self.T_LO_NED))
+        a_dec = 1 - math.exp(-1 / (R * self.T_DEC))
+        p_on, p_off, lg, golv, fm = self.P_ON, self.P_OFF, self.LO_GRANS, self.GOLV, self.F_MIN
         hi, lo = self.lvl_hi, self.lvl_lo
         key = np.empty(len(e), bool)
         st = self.state
+        self._kf = kf = []           # tröskelns läge (andel brus → ton) vid varje flank
         for i, v in enumerate(e):
             v = float(v)
             if st:
                 hi += a_on * (v - hi)
             else:
-                lo += a_off * (v - lo)
+                if v < lo + lg * (hi - lo):
+                    lo += (a_off if v > lo else a_ned) * (v - lo)
                 hi -= a_dec * (hi - lo)
                 if v > hi:
                     hi = v
-            mid = 0.5 * (hi + lo)
-            floor = 2.0 * lo
-            if st and v < max(0.88 * mid, 0.75 * floor):
-                st = False
-            elif not st and v > max(1.12 * mid, floor):
-                st = True
+            q = max(hi, lo * 1.0001) / max(lo, 1e-12)
+            gmin = lo + fm * (hi - lo)
+            if st:
+                t = max(lo * q ** p_off, 0.8 * gmin, 0.75 * golv * lo)
+                if v < t:
+                    st = False
+                    kf.append((t - lo) / max(hi - lo, 1e-12))
+            else:
+                t = max(lo * q ** p_on, gmin, golv * lo)
+                if v > t:
+                    st = True
+                    kf.append((t - lo) / max(hi - lo, 1e-12))
             key[i] = st
         self.lvl_hi, self.lvl_lo = hi, lo
         return key
@@ -1674,22 +1702,38 @@ class CwAvkodare(Avkodare):
             self.state, self.run = bool(key[-1]), 0
             self.pend, self.bridge, self.gap, self.sym = None, 0.0, 0.0, ""
             self.backlog = []
+            self.rq = []
             return ""
         out = []
         # körlängder ur nyckelläget (den sista körningen är öppen)
         ch = np.flatnonzero(key[1:] != key[:-1]) + 1
         starts = np.concatenate(([0], ch))
         lens = np.diff(np.concatenate((starts, [len(key)])))
+        kf = iter(self._kf)
+
+        def slut(mark, d):
+            # Filtret (glidande medel, L) drar ut en ton med L·(1 − f_på − f_av), där f är tröskelns
+            # läge mellan brus och ton vid flankerna; pausen krymper lika mycket. Räkna tillbaka.
+            fb = min(1.0, max(0.0, next(kf, 0.5)))
+            k = self.L_s * (1 - self.f_start - fb)
+            self.f_start = fb
+            self._run_end(mark, max(0.002, d - k if mark else d + k), out)
+
         if key[0] != self.state:            # ny körning direkt i början
-            self._run_end(self.state, self.run / R, out)
+            slut(self.state, self.run / R)
             self.run = 0
         for s, n in zip(key[starts[:-1]], lens[:-1]):
-            self._run_end(bool(s), (self.run + n) / R, out)
+            slut(bool(s), (self.run + n) / R)
             self.run = 0
         self.state = bool(key[starts[-1]])
         self.run += int(lens[-1])
-        if not self.state:
-            self._open_gap(self.bridge + self.gap + self.run / R, out)
+        if not self.state and self.dot is not None:
+            g = self.run / R
+            if g >= self.BRYGGA * self.dot:      # pausen är äkta: det som väntar kan avgöras
+                if self.rq and self.rq[-1][0] is False:
+                    g += self.rq.pop()[1]
+                self._toem_ko(out)
+                self._open_gap(self.bridge + self.gap + g, out)
         return "".join(out)
 
     def _run_end(self, mark, d, out):
@@ -1705,9 +1749,36 @@ class CwAvkodare(Avkodare):
                 self.marks.clear()          # fylls på igen när backloggen spelas upp
                 self.spaces.clear()
                 for m, dd in bl:
-                    self._run(m, dd, out)
+                    self._ko(m, dd, out)
             return
-        self._run(mark, d, out)
+        self._ko(mark, d, out)
+
+    BRYGGA = 0.5       # avbrott kortare än så här (i prickar) mitt i en ton slås ihop med tonen
+    TOPP = 0.3         # toner kortare än så här (i prickar) mitt i en paus räknas som störning
+
+    def _ko(self, mark, d, out):
+        """Kö med en körnings framförhållning: en kort körning mellan två av motsatt sort
+        (avbrott i en ton vid snabb fädning, störtopp i en paus) slås ihop med grannarna."""
+        q = self.rq
+        if q and q[-1][0] == mark:
+            q[-1][1] += d
+        else:
+            q.append([mark, d])
+        while len(q) >= 3:
+            m1, d1 = q[1]
+            # avbrott mäts mot den korta pausen, störtoppar mot pricken: om tröskeln drar ut
+            # tonerna växer pricken och krymper pausen lika mycket, så gränserna följer med
+            if d1 < (self.TOPP * self.dot if m1 else self.BRYGGA * (self.gaps[0] if self.gaps else self.dot)):
+                q[0][1] += d1 + q[2][1]
+                del q[1:3]
+                continue
+            m0, d0 = q.pop(0)
+            self._run(m0, d0, out)
+
+    def _toem_ko(self, out):
+        while self.rq:
+            m0, d0 = self.rq.pop(0)
+            self._run(m0, d0, out)
 
     def _run(self, mark, d, out):
         dot = self.dot
@@ -1816,7 +1887,9 @@ class CwAvkodare(Avkodare):
             else:
                 cc, w = 3 * e, 7 * e
             self.gaps = (min(e, 1.5 * dot), cc, w)
-        u = (dot + (dash / 3 if dash else dot) + (self.gaps[0] if self.gaps else dot)) / 3
+        # en prick + en kort paus = två enheter, oberoende av om tröskeln förlänger tonerna
+        u = (dot + self.gaps[0]) / 2 if self.gaps else dot
+        self.unit = u
         self.wpm = 1.2 / u
         self.fw = None
         if self.gaps and self.gaps[1] > 4.5 * u:

@@ -398,6 +398,8 @@ MORSE_FALL = [
     ("150 Hz vid sidan", dict(wpm=20, off=150)), ("−300 Hz vid sidan", dict(wpm=20, off=-300)),
     ("Fädning (QSB) 80 %", dict(wpm=20, qsb=0.8)), ("fs 48 kHz", dict(wpm=20, fs=48000)),
     ("fs 12 kHz, 0,1 s bitar", dict(wpm=22, fs=12000, chunk=0.1)),
+    ("Flutter 5 Hz (som FAV22)", dict(wpm=24, fd=5, rice=1.0, snr=12)),
+    ("Flutter 10 Hz, djup", dict(wpm=24, fd=10, rice=0.3, snr=12)),
 ]
 
 
@@ -419,12 +421,26 @@ def morse_nyckel(text, wpm, fw=None, jitter=0.0, dash=3.0, rng=None):
     return ut
 
 
-def morse_signal(nyckel, fs, snr_db, rng, off=0.0, qsb=0.0):
-    """Komplext basband; snr_db räknas i 500 Hz bandbredd."""
+def flutter(n, fs, fd, rice, rng):
+    """Snabb fädning som på kortvåg (flervägsutbredning): Rice-kanal med dopplerspridning fd Hz.
+    rice = effekt i den fasta vägen / effekt i de spridda (lågt värde = djupa, korta avbrott)."""
+    m = max(8, int(n * 2 * fd / fs) + 8)                  # spridda vägen samplas glest och interpoleras
+    g = (rng.standard_normal(m) + 1j * rng.standard_normal(m)) / np.sqrt(2)
+    g = analys._smooth(g.real, 2) + 1j * analys._smooth(g.imag, 2)
+    g /= np.sqrt(np.mean(np.abs(g) ** 2))
+    tg = np.linspace(0, n, m)
+    h = np.interp(np.arange(n), tg, g.real) + 1j * np.interp(np.arange(n), tg, g.imag)
+    return (np.sqrt(rice / (rice + 1)) + np.sqrt(1 / (rice + 1)) * h).astype(np.complex64)
+
+
+def morse_signal(nyckel, fs, snr_db, rng, off=0.0, qsb=0.0, fd=0.0, rice=1.0):
+    """Komplext basband; snr_db räknas i 500 Hz bandbredd. fd > 0 ger snabb fädning (flutter)."""
     k = np.concatenate([np.full(max(1, int(d * fs)), v, np.float32) for v, d in nyckel])
     k = analys._smooth(k, fs * 0.004)
     t = np.arange(len(k)) / fs
     z = k * np.exp(2j * np.pi * off * t) * (1 - qsb * (0.5 + 0.5 * np.sin(2 * np.pi * 0.15 * t)))
+    if fd:
+        z = z * flutter(len(k), fs, fd, rice, rng)
     sigma = 10 ** (-snr_db / 20) / np.sqrt(2) * np.sqrt(fs / 500)
     return (z + sigma * (rng.standard_normal(len(k)) + 1j * rng.standard_normal(len(k)))).astype(np.complex64)
 
@@ -438,10 +454,11 @@ def morse_fel(facit, fick):
     return best
 
 
-def morse_kor(wpm, fs=8000, snr=20, fw=None, jitter=0.0, dash=3.0, off=0.0, qsb=0.0, chunk=0.35, seed=1):
+def morse_kor(wpm, fs=8000, snr=20, fw=None, jitter=0.0, dash=3.0, off=0.0, qsb=0.0, chunk=0.35, seed=1,
+              fd=0.0, rice=1.0):
     rng = np.random.default_rng(seed)
     # texten sänds två gånger: det andra varvet mäts, när avkodaren har lärt sig takten
-    z = morse_signal(morse_nyckel(MORSE_TEXT + " " + MORSE_TEXT, wpm, fw, jitter, dash, rng), fs, snr, rng, off, qsb)
+    z = morse_signal(morse_nyckel(MORSE_TEXT + " " + MORSE_TEXT, wpm, fw, jitter, dash, rng), fs, snr, rng, off, qsb, fd, rice)
     d = analys.CwAvkodare()
     c = int(chunk * fs)
     ut = "".join(d.feed(z[i:i + c], fs, {"fam": "OOK"}) for i in range(0, len(z), c))
