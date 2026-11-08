@@ -79,7 +79,25 @@ def exempel(seed, sek=8.0):
     if st.qsb:
         zs = zs * (1 - st.qsb * (0.5 + 0.5 * np.sin(2 * np.pi * tt / st.qsb_period)))
     m = min(len(zs), len(zrest))
-    return (zs[:m] + zrest[:m]).astype(np.complex64), tecken
+    z = zs[:m] + zrest[:m]
+    # ── variation som riktiga signaler har men generatorn inte (annars generaliserar nätet inte) ──
+    if rng.random() < 0.3:             # station nästan på samma frekvens (5–60 Hz bort)
+        gr = G.Station(G.cq(rng) + " " + G.klartext(rng), wpm=float(rng.uniform(12, 35)),
+                       off_hz=st.off_hz + float(rng.choice([-1, 1]) * rng.uniform(5, 60)),
+                       niva_db=float(rng.uniform(-15, -3)), start_s=float(rng.uniform(-2, 2)))
+        z = z + G.station_signal(gr, FS, m, rng)[0]
+    if rng.random() < 0.3:             # kvarvarande bärvåg i pauserna (läckande nyckling)
+        z = z + 10 ** (rng.uniform(-30, -12) / 20) * np.exp(2j * np.pi * st.off_hz * tt[:m])
+    if rng.random() < 0.3:             # eko/efterklang (rum, högtalare, flervägsutbredning)
+        L = int(FS * rng.uniform(0.02, 0.15))
+        ir = (rng.standard_normal(L) + 1j * rng.standard_normal(L)) * np.exp(-np.arange(L) / (L / 4))
+        ir[0] = 3.0
+        z = np.convolve(z, ir / np.abs(ir).sum() * 3, mode="same")
+    if rng.random() < 0.3:             # snabb AGC: nivån dras ned under tonerna
+        tau = int(FS * rng.uniform(0.05, 0.5))
+        env = np.sqrt(np.convolve(np.abs(z) ** 2, np.ones(tau) / tau, mode="same")) + 1e-3
+        z = z / env ** rng.uniform(0.5, 1.0)
+    return z.astype(np.complex64), tecken
 
 
 def text_i(tecken, t0, t1):
@@ -96,8 +114,9 @@ def spektrogram(z, f0=0.0):
     X = np.fft.fftshift(np.fft.fft(z[idx] * np.hanning(NFFT), axis=1), axes=1)
     mid = NFFT // 2
     S = np.log(np.abs(X[:, mid - BINS // 2:mid + BINS // 2 + 1]) ** 2 + 1e-9)
-    S -= np.median(S)
-    S /= S.std() + 1e-6
+    # varje kanal för sig över tiden: kontrasten ton/paus räknas, inte nivån eller bandets form
+    S -= np.percentile(S, 20, axis=0, keepdims=True)
+    S /= np.percentile(np.abs(S), 95) + 1e-6
     return S.astype(np.float32)
 
 
