@@ -278,6 +278,14 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   99,73 (RTTY), 99,77 (8PSK 2400 Bd), 99,83 (8-FSK), 99,86 (16 toner),
   99,90 (Morse) och 100,20 MHz (BPSK), samt avkodartester på 99,68 (NAVTEX),
   100,12 (ALE), 100,25 (väderfax), 100,42 (POCSAG) och 100,62 MHz (DMR).
+  CW-band på 99,45 MHz (från CW-generatorn, för att öva Morse-avkodaren):
+    99,4500 MHz  FAV22-lik: träningsgrupper, 24 ord/min, fladder (välj gärna
+                 avkodaren "Morse – träningsgrupper (5 tecken)")
+    99,4488 MHz  QSO med bug-nyckel och QSB, 20 ord/min
+    99,4476 MHz  rak nyckel med chirp, 14 ord/min
+    99,4511 MHz  Farnsworth 20/10
+    99,4516/99,4518 MHz  två starka contest-stationer tätt intill varandra
+    99,4523 MHz  svag CQ-station (20 dB under)
 
  Utseende
   Visning → Utseende: "Spanare" (mörk marin med bärnstensfärgade detaljer och
@@ -297,6 +305,14 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
                                  --syntetiskt kör fallen ovan med båda avkodarna. fldigi körs
                                  utan skärm och kräver paketen fldigi, xvfb, pulseaudio och
                                  pulseaudio-utils
+  python3 cwgenerator.py --scen fav22 --sek 120 --ut x.wav
+                                 syntetisk CW med facit (x.txt): scenarierna ren, fav22, qso,
+                                 rak, contest, svag, qrn, trangt, farnsworth och bug; --iq ger
+                                 IQ i stereo, --dataset 40 --mapp dir ger slumpade övningsklipp
+  python3 cwtrana.py '{"FILTER": [0.4, 0.5, 0.6]}'
+                                 tränar Morse-avkodarens inställningar: rutnätssökning mot
+                                 fallen i analystest.py morse, generatorns scenarier och de
+                                 riktiga inspelningarna i testdata/cw/ (WAV + .txt med facit)
   Klippen sparas i ~/.local/share/signalspanaren/facit-klipp/.
 
  Skärmanpassning

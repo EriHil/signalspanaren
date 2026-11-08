@@ -888,6 +888,13 @@ class SimSource(BaseSource):
         self.ais_t0 = time.monotonic()
         self.low = [(99.9e6 + off, sig, amp) for off, _n, sig, amp in analys.test_signals(48000)]
         self.low.append((99.9e6, analys.make_morse(48000, "CQ CQ DE SM5SIM SM5SIM PSE K   ", 20), 0.05))
+        # CW-band på 99,45 MHz från CW-generatorn: en FAV22-lik station med träningsgrupper och
+        # fladder (mitt), ett QSO med bug och QSB, en rak nyckel med chirp, Farnsworth, en svag
+        # station och en stark contest-station tätt intill – att öva avkodaren på
+        try:
+            self.low.append((99.45e6, _sim_cw_band(48000), 0.05))
+        except Exception:
+            log.exception("Simulatorns CW-band kunde inte skapas")
         V = analysavkodare
         silence = np.zeros(48000 * 3, np.complex64)
         self.low += [
@@ -988,6 +995,25 @@ class SimSource(BaseSource):
             x += y * car * ph
         self.n0 += BLOCK
         return x.astype(np.complex64), self.center, None
+
+
+def _sim_cw_band(fs, sek=40.0):
+    """Simulatorns CW-band (komplext basband kring 99,45 MHz), en slinga på sek sekunder."""
+    import cwgenerator as G
+    rng = np.random.default_rng(22)
+    S = G.Station
+    band = G.Band([
+        S(G.grupper(rng, 30), wpm=24, fd=5, rice=1.0, namn="FAV22-lik"),                    # 0 Hz
+        S(G.qso(rng), wpm=20, nyckel="bug", qsb=0.5, off_hz=-1200, niva_db=-3),
+        S(G.qso(rng), wpm=14, nyckel="rak", chirp_hz=10, off_hz=-2400, niva_db=-6),
+        S(G.klartext(rng), wpm=20, farnsworth=10, off_hz=1100, niva_db=-4),
+        S(G.cq(rng), wpm=18, off_hz=2300, niva_db=-20),
+        S(G.contest(rng), wpm=32, off_hz=1600, niva_db=6),
+        S(G.contest(rng), wpm=28, off_hz=1780, niva_db=2),
+    ], snr_db=30, qrn=0.5)
+    z, _ = G.generera(band, fs, sek, seed=22)
+    z /= np.sqrt(np.mean(np.abs(z) ** 2)) + 1e-12
+    return z.astype(np.complex64)
 
 
 def _sim_ship_payload(sim, kind):

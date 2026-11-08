@@ -106,7 +106,9 @@ def skriv_wav(p, a, fs=LJUD_FS):
 # ════════════════════════════════════════════════════════════════════
 # Avkodarna
 # ════════════════════════════════════════════════════════════════════
-def signalspanaren(z, fs, bit=0.35, grupp=None):
+def signalspanaren(z, fs, bit=0.35, grupp=None, mitt=None):
+    """Avkodar z. mitt = signalens frekvens i Hz (som analysen ger programmets avkodare),
+    annars söker avkodaren själv kring 0 Hz."""
     # 2 s svagt brus efter klippet, så att de sista tecknen hinner skrivas ut (som ggmorse gör)
     rng = np.random.default_rng(0)
     sv = float(np.sqrt(np.mean(np.abs(z) ** 2))) * 1e-3 + 1e-9
@@ -115,7 +117,8 @@ def signalspanaren(z, fs, bit=0.35, grupp=None):
     if grupp:
         d.GRUPP = grupp
     c = int(bit * fs)
-    ut = "".join(d.feed(z[i:i + c], fs, {"fam": "OOK"}) for i in range(0, len(z), c))
+    feat = {"fam": "OOK"} if mitt is None else {"fam": "OOK", "f_mid": float(mitt)}
+    ut = "".join(d.feed(z[i:i + c], fs, feat) for i in range(0, len(z), c))
     return " ".join(ut.split()), d
 
 

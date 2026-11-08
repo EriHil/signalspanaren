@@ -1574,6 +1574,8 @@ class CwAvkodare(Avkodare):
     RA = 2000.0        # Hz, mellansteg för bärvågsspårning och smalt filter
     SOK_HZ = 400.0     # bärvågen söks inom ±400 Hz från mitten …
     SOK_NARA = 120.0   # … eller ±120 Hz från signalens mitt när analysen har mätt den
+    FILTER = 0.5       # det smala filtrets längd i enheter (prickar)
+    START_ENHET = 0.06  # s, antagen enhet innan takten är inlärd (0,06 = 20 ord/min)
     MIN_EL = 0.012     # s; kortare toner är störningar (en prick i 100 ord/min)
     GATE = 2.6         # tonnivå/brusnivå som krävs; rent brus ger ~2,2 efter det smala filtret
 
@@ -1650,16 +1652,23 @@ class CwAvkodare(Avkodare):
         self.ph = float((self.ph + 2 * np.pi * self.f0 / ra * len(y)) % (2 * np.pi))
         # smalt filter: glidande medel ~ en halv prick (5–40 ms; 20 ord/min innan takten är känd).
         # Toner kortare än filtret kan inte vara äkta – de räknas som störningar (se min_el).
-        L = int(np.clip(round((self.unit or 0.06) * 0.5 * ra), max(1, ra * 0.005), ra * 0.04))
+        L = int(np.clip(round((self.unit or self.START_ENHET) * self.FILTER * ra), max(1, ra * 0.005), ra * 0.05))
         self.min_el = max(self.MIN_EL, 0.8 * L / ra)
         self.L_s = L / ra
         yy = np.concatenate((self.acc2, y))
-        if len(yy) < L:
+        if len(yy) < L + 1:
             self.acc2 = yy
             return np.zeros(0, np.float32)
+        # två glidande medel efter varandra (L1 + L2 = L): sidloberna dämpas dubbelt så mycket i dB
+        # som med ett, så en stark granne några hundra Hz bort läcker inte in i pauserna
+        L1 = max(1, L // 2)
+        L2 = max(1, L - L1 + 1)
         cs = np.concatenate(([0], np.cumsum(yy)))
-        m = (cs[L:] - cs[:-L]) / L
-        self.acc2 = yy[len(yy) - (L - 1):] if L > 1 else yy[:0]
+        m1 = (cs[L1:] - cs[:-L1]) / L1
+        cs = np.concatenate(([0], np.cumsum(m1)))
+        m = (cs[L2:] - cs[:-L2]) / L2
+        Lt = L1 + L2 - 1
+        self.acc2 = yy[len(yy) - (Lt - 1):] if Lt > 1 else yy[:0]
         # decimera till nyckellägets upplösning
         d = max(1, int(round(ra / self.RATE)))
         e = np.abs(m[(-self._dec) % d::d]).astype(np.float32)
