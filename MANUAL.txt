@@ -278,17 +278,19 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   99,73 (RTTY), 99,77 (8PSK 2400 Bd), 99,83 (8-FSK), 99,86 (16 toner),
   99,90 (Morse) och 100,20 MHz (BPSK), samt avkodartester på 99,68 (NAVTEX),
   100,12 (ALE), 100,25 (väderfax), 100,42 (POCSAG) och 100,62 MHz (DMR).
-  CW-band på 99,45 MHz (från CW-generatorn, för att öva Morse-avkodaren):
-    99,4500 MHz  FAV22-lik: träningsgrupper, 24 ord/min, fladder (välj gärna
-                 avkodaren "Morse – träningsgrupper (5 tecken)")
-    99,4470 MHz  QSO där två stationer turas om (bug 20 ord/min + rak nyckel
+  CW från CW-generatorn (för att öva Morse-avkodaren), på riktiga band:
+    3,881 och 6,825 MHz  FAV22-lik: träningsgrupper, 24 ord/min, fladder (välj
+                 gärna avkodaren "Morse – träningsgrupper (5 tecken)")
+    40 m CW (7,0185–7,0395 MHz):
+    7,0275 MHz   CQ med QSB, 22 ord/min
+    7,0245 MHz   QSO där två stationer turas om (bug 20 ord/min + rak nyckel
                  16 ord/min, 25 Hz isär och 7 dB svagare)
-    99,4530 MHz  fyr (VVV DE …/B)
-    99,4440 MHz  två stationer som sänder samtidigt 40 Hz isär (QSO + bulletin)
-    99,4560 MHz  Farnsworth 20/10
-    99,4410 MHz  rak nyckel med chirp, 14 ord/min
-    99,4590/99,4592 MHz  två starka contest-stationer 180 Hz isär
-    99,4620 MHz  svag CQ-station (20 dB under)
+    7,0305 MHz   fyr (VVV DE …/B)
+    7,0215 MHz   två stationer som sänder samtidigt 40 Hz isär (QSO + bulletin)
+    7,0335 MHz   Farnsworth 20/10
+    7,0185 MHz   rak nyckel med chirp, 14 ord/min
+    7,0365/7,03668 MHz  två starka contest-stationer 180 Hz isär
+    7,0395 MHz   svag CQ-station (20 dB under)
 
  Utseende
   Visning → Utseende: "Spanare" (mörk marin med bärnstensfärgade detaljer och

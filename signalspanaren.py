@@ -888,13 +888,15 @@ class SimSource(BaseSource):
         self.ais_t0 = time.monotonic()
         self.low = [(99.9e6 + off, sig, amp) for off, _n, sig, amp in analys.test_signals(48000)]
         self.low.append((99.9e6, analys.make_morse(48000, "CQ CQ DE SM5SIM SM5SIM PSE K   ", 20), 0.05))
-        # CW-band på 99,45 MHz från CW-generatorn: en FAV22-lik station med träningsgrupper och
-        # fladder (mitt), ett växel-QSO, ett överlappande par, en fyr, en rak nyckel med chirp,
-        # Farnsworth, en svag station och starka contest-stationer tätt intill – att öva på
+        # CW från CW-generatorn, på riktiga band: 40 m:s CW-del (7,0155–7,0395 MHz) med QSO,
+        # fyr, överlappande stationer, contest m.m., och en FAV22-lik station med träningsgrupper
+        # parallellt på 3881 och 6825 kHz (som den riktiga) – att öva Morse-avkodaren på
         try:
-            self.low.append((99.45e6, _sim_cw_band(48000), 0.05))
+            self.low.append((7.0275e6, _sim_cw_band(48000), 0.05))
+            fav = _sim_fav22(48000)
+            self.low += [(3.881e6, fav, 0.05), (6.825e6, fav, 0.03)]
         except Exception:
-            log.exception("Simulatorns CW-band kunde inte skapas")
+            log.exception("Simulatorns CW-signaler kunde inte skapas")
         V = analysavkodare
         silence = np.zeros(48000 * 3, np.complex64)
         self.low += [
@@ -998,7 +1000,7 @@ class SimSource(BaseSource):
 
 
 def _sim_cw_band(fs, sek=40.0):
-    """Simulatorns CW-band (komplext basband kring 99,45 MHz), en slinga på sek sekunder."""
+    """Simulatorns 40 m CW-band (komplext basband kring 7,0275 MHz), en slinga på sek sekunder."""
     import cwgenerator as G
     rng = np.random.default_rng(22)
     S = G.Station
@@ -1008,21 +1010,34 @@ def _sim_cw_band(fs, sek=40.0):
     qb = S("", wpm=16, nyckel="rak", off_hz=-2975, niva_db=-10, fd=2, rice=2.0)
     G.planera_turer([qa, qb], G.qso_turer(rng), rng=rng)
     band = G.Band([
-        S(G.grupper(rng, 30), wpm=24, fd=5, rice=1.0, namn="FAV22-lik"),                    # 0
-        qa, qb,                                                                            # −3 kHz
-        S(G.fyr(rng), wpm=15, off_hz=3000, niva_db=-6),                                    # +3 kHz
-        S(G.qso(rng), wpm=22, off_hz=-6000, niva_db=-2),                                   # överlappande
-        S(G.bulletin(rng), wpm=18, off_hz=-5960, niva_db=-8),                              # par, 40 Hz isär
-        S(G.klartext(rng), wpm=20, farnsworth=10, off_hz=6000, niva_db=-4),                # +6 kHz
-        S(G.qso(rng), wpm=14, nyckel="rak", chirp_hz=10, off_hz=-9000, niva_db=-6),        # −9 kHz
-        S(G.contest(rng), wpm=32, off_hz=9000, niva_db=6),                                 # contest-par,
-        S(G.contest(rng), wpm=28, off_hz=9180, niva_db=2),                                 # 180 Hz isär
-        S(G.cq(rng), wpm=18, off_hz=12000, niva_db=-20),                                   # svag, +12 kHz
+        S(G.cq(rng), wpm=22, qsb=0.3),                                                     # 7,0275
+        qa, qb,                                                                            # 7,0245
+        S(G.fyr(rng), wpm=15, off_hz=3000, niva_db=-6),                                    # 7,0305
+        S(G.qso(rng), wpm=22, off_hz=-6000, niva_db=-2),                                   # 7,0215: två
+        S(G.bulletin(rng), wpm=18, off_hz=-5960, niva_db=-8),                              # samtidigt, 40 Hz
+        S(G.klartext(rng), wpm=20, farnsworth=10, off_hz=6000, niva_db=-4),                # 7,0335
+        S(G.qso(rng), wpm=14, nyckel="rak", chirp_hz=10, off_hz=-9000, niva_db=-6),        # 7,0185
+        S(G.contest(rng), wpm=32, off_hz=9000, niva_db=6),                                 # 7,0365 och
+        S(G.contest(rng), wpm=28, off_hz=9180, niva_db=2),                                 # 7,03668
+        S(G.cq(rng), wpm=18, off_hz=12000, niva_db=-20),                                   # 7,0395 svag
     ], snr_db=90)
     # nästan inget eget brus och inget åskknaster: simulatorns brus är golvet. Annars syns
     # generatorns 48 kHz breda brusmatta som en bred signal och analysen tar bandet för AM.
     z, _ = G.generera(band, fs, sek, seed=22)
     z /= float(np.percentile(np.abs(z), 99)) + 1e-12      # starkaste stationen ≈ 1
+    return z.astype(np.complex64)
+
+
+def _sim_fav22(fs):
+    """FAV22-lik station: träningsgrupper om fem, 24 ord/min, fladder (3881/6825 kHz).
+    Slingan är lika lång som sändningen plus en paus, så att den inte börjar om mitt i en grupp."""
+    import cwgenerator as G
+    rng = np.random.default_rng(2222)
+    st = G.Station("VVV VVV DE FAV22 FAV22 = " + G.grupper(rng, 20) + " = AR", wpm=24, fd=5, rice=1.0,
+                   namn="FAV22-lik", start_s=1.0)
+    sek = 1.0 + G.sandningslangd(st, st.text) + 2.5
+    z, _ = G.generera(G.Band([st], snr_db=90), fs, sek, seed=2222)
+    z /= float(np.percentile(np.abs(z), 99)) + 1e-12
     return z.astype(np.complex64)
 
 

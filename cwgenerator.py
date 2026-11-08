@@ -16,7 +16,8 @@ utbredningsväg (fladder, QSB, frekvensdrift). Bandet får brus, åskknaster och
 Scenarier: ren, fav22, qso, rak, contest, svag, qrn, trangt, farnsworth, bug,
 vaxel (QSO där två stationer turas om), nat (tre stationer), overlapp (två samtidigt 40 Hz
 isär), nollstampel (svagare station 6 Hz bort), pileup och blandat (fyr, siffror, bulletin …).
-I programmet finns ett CW-band i simulatorn på 99,45 MHz (källa: Simulator).
+I programmets simulator (källa: Simulator) finns CW på 40 m (7,0185–7,0395 MHz) och en
+FAV22-lik station på 3881 och 6825 kHz.
 """
 import argparse
 import math
