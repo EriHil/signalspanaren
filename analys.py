@@ -1522,6 +1522,16 @@ MORSE = {".-": "A", "-...": "B", "-.-.": "C", "-..": "D", ".": "E", "..-.": "F",
 class CwAvkodare(Avkodare):
     namn = "Morse (CW)"
     RATE = 500.0     # Hz, upplösning för nyckelläget
+    HIGH_PERCENTILE = 95
+    ON_HYSTERESIS = 1.15
+    OFF_HYSTERESIS = 0.85
+    LEVEL_DECAY = 1.5
+    NOISE_TAU = 1.0
+    KEY_MERGE = 0.3
+    DOT_MAX = 1.55
+    DASH_MIN = 2.35
+    DASH_MAX = 4.5
+    GAP_UNCERTAIN = (1.7, 2.7)
 
     def __init__(self):
         self.reset()
@@ -1540,6 +1550,7 @@ class CwAvkodare(Avkodare):
         self.letter_done = False
         self.word_done = False
         self.last_output = ""
+        self.sym_uncertain = False
 
     def passar(self, feat):
         return feat.get("fam") == "OOK"
@@ -1555,15 +1566,20 @@ class CwAvkodare(Avkodare):
             return ""
         e = self.acc[:n * k].reshape(n, k).mean(axis=1)
         self.acc = self.acc[n * k:]
-        hi, lo = float(np.percentile(e, 99)), float(np.percentile(e, 10))
-        self.lvl_hi = hi if self.lvl_hi is None else max(hi, self.lvl_hi * 0.93)
-        self.lvl_lo = lo if self.lvl_lo is None else min(lo, self.lvl_lo * 0.7 + lo * 0.3)
+        hi, lo = float(np.percentile(e, self.HIGH_PERCENTILE)), float(np.percentile(e, 10))
+        dt = n / self.RATE
+        if self.lvl_hi is None:
+            self.lvl_hi, self.lvl_lo = hi, lo
+        else:
+            self.lvl_hi = max(hi, self.lvl_hi * math.exp(-dt / self.LEVEL_DECAY))
+            alpha = 1 - math.exp(-dt / self.NOISE_TAU)
+            self.lvl_lo += alpha * (lo - self.lvl_lo)
         thr = (self.lvl_hi + self.lvl_lo) / 2
         es = _smooth(e, 4)
         out = []
         dot = self._dot()
         R = self.RATE
-        on_t, off_t = thr * 1.15, thr * 0.85     # hysteres mot brus
+        on_t, off_t = thr * self.ON_HYSTERESIS, thr * self.OFF_HYSTERESIS
         key = np.empty(len(es), bool)
         st = self.state
         for i, v in enumerate(es):
@@ -1572,6 +1588,12 @@ class CwAvkodare(Avkodare):
             elif not st and v > on_t:
                 st = True
             key[i] = st
+        max_gap = int(self.KEY_MERGE * (dot or 0.016) * R)
+        edges = np.diff(np.concatenate(([False], key, [False])).astype(np.int8))
+        ends, starts = np.flatnonzero(edges == -1), np.flatnonzero(edges == 1)
+        for end, start in zip(ends[:-1], starts[1:]):
+            if start - end <= max_gap:
+                key[end:start] = True
         for b in key:
             if b == self.state:
                 self.run += 1
@@ -1602,23 +1624,33 @@ class CwAvkodare(Avkodare):
     def _consume_pending(self, dot, out):
         for is_mark, duration in self.pending:
             if is_mark:
-                self.sym += "." if duration < 2 * dot else "-"
+                units = duration / dot
+                if units <= self.DOT_MAX:
+                    self.sym += "."
+                    self.sym_uncertain |= units < 0.5
+                else:
+                    self.sym += "-"
+                    self.sym_uncertain |= units < self.DASH_MIN or units > self.DASH_MAX
             else:
                 self.letter_done = False
                 self.word_done = False
+                units = duration / dot
+                self.sym_uncertain |= self.GAP_UNCERTAIN[0] <= units <= self.GAP_UNCERTAIN[1]
                 self._decode_gap(duration, dot, out)
         self.pending.clear()
 
     def _decode_gap(self, duration, dot, out):
         if duration >= 2.2 * dot and not self.letter_done:
             if self.sym:
-                self._emit(MORSE.get(self.sym, "*"), out)
+                self._emit("*" if self.sym_uncertain else MORSE.get(self.sym, "*"), out)
                 self.sym = ""
+                self.sym_uncertain = False
             self.letter_done = True
         if duration >= 5.5 * dot and not self.word_done:
             if self.sym:
-                self._emit(MORSE.get(self.sym, "*"), out)
+                self._emit("*" if self.sym_uncertain else MORSE.get(self.sym, "*"), out)
                 self.sym = ""
+                self.sym_uncertain = False
                 self.letter_done = True
             if self.last_output and self.last_output != " ":
                 out.append(" ")

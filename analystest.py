@@ -10,7 +10,8 @@ analysen bättre eller sämre, och som underlag för att träna klassningen.
 
   python3 analystest.py mat                    mät på inspelade klipp + syntetiska signaler
   python3 analystest.py mat --bara-syntetiskt  bara de syntetiska (snabbt, ingen nätåtkomst)
-  python3 analystest.py cw                     testa CW-avkodning vid flera hastigheter och blockstorlekar
+  python3 analystest.py cw                     testa CW-avkodning med brusiga testsignaler
+  python3 analystest.py cw --wav FIL.wav        avkoda en inspelad CW-ljudfil
   python3 analystest.py mat --spara r.json     spara resultatet (för jämförelse senare)
   python3 analystest.py mat --jamfor r.json    visa vad som blivit bättre/sämre mot en tidigare körning
   python3 analystest.py samla                  spela in klipp från KiwiSDR för signalerna i facit.json
@@ -402,7 +403,73 @@ def testa_cw(_args):
             if text.strip() != expected:
                 print(f"Fel vid {wpm} ord/min och blockstorlek {block}: {text.strip()!r}")
                 return 1
-    print("CW-avkodaren klarade 8–40 ord/min med brus och alla testade blockstorlekar.")
+
+    decoder = analys.CwAvkodare()
+    uncertain = []
+    dot = 0.06
+    decoder.pending = [(True, dot * 1.9)]
+    decoder._consume_pending(dot, uncertain)
+    decoder._decode_gap(dot * 3, dot, uncertain)
+    if "".join(uncertain) != "*":
+        print(f"Osäker Morse-symbol blev inte markerad med *: {''.join(uncertain)!r}")
+        return 1
+
+    from scipy.io import wavfile
+    from scipy.signal import butter, hilbert, sosfiltfilt, welch
+
+    audio_fs = 48000.0
+    audio_text = "CQ CQ POTA DE G0DZB/P K"
+    envelope = analys.make_morse(audio_fs, audio_text, wpm=16).real
+    audio_t = np.arange(len(envelope)) / audio_fs
+    audio = envelope * (0.7 + 0.3 * np.sin(2 * np.pi * 0.17 * audio_t + 0.3))
+    audio *= np.cos(2 * np.pi * 706 * audio_t)
+    audio += 0.05 * rng.standard_normal(len(audio))
+    sos = butter(4, [686, 726], btype="bandpass", fs=audio_fs, output="sos")
+    iq = hilbert(sosfiltfilt(sos, audio)).astype(np.complex64)
+    decoder = analys.CwAvkodare()
+    text = "".join(decoder.feed(iq[i:i + 16800], audio_fs, {"fam": "OOK"})
+                   for i in range(0, len(iq), 16800))
+    if text.strip() != audio_text:
+        print(f"Fel vid CW-ljudtest med bärton, fading och brus: {text.strip()!r}")
+        return 1
+
+    if _args.wav:
+        rate, samples = wavfile.read(_args.wav)
+        if rate <= 4000:
+            print(f"WAV-filen har för låg samplingsfrekvens för CW-ljud: {rate} Hz.")
+            return 1
+        samples = np.asarray(samples)
+        if samples.ndim == 2:
+            samples = samples.astype(np.float32).mean(axis=1)
+        elif samples.ndim != 1:
+            print(f"WAV-filen har ett format med {samples.ndim} dimensioner som inte stöds.")
+            return 1
+        if np.issubdtype(samples.dtype, np.integer):
+            info = np.iinfo(samples.dtype)
+            samples = samples.astype(np.float32) / max(abs(info.min), info.max)
+        else:
+            samples = samples.astype(np.float32)
+        if not len(samples) or not np.isfinite(samples).all():
+            print("WAV-filen är tom eller innehåller ogiltiga sampel.")
+            return 1
+        nperseg = min(len(samples), 131072)
+        frequencies, power = welch(samples, rate, nperseg=nperseg)
+        band = (frequencies >= 300) & (frequencies <= min(2000, rate / 2 - 100))
+        if not band.any():
+            print("Hittade inget möjligt CW-tonband i WAV-filen.")
+            return 1
+        tone = float(frequencies[band][np.argmax(power[band])])
+        low, high = max(100.0, tone - 15), min(rate / 2 - 100, tone + 15)
+        audio_sos = butter(4, [low, high], btype="bandpass", fs=rate, output="sos")
+        iq = hilbert(sosfiltfilt(audio_sos, samples)).astype(np.complex64)
+        decoder = analys.CwAvkodare()
+        block = max(1, int(rate * 0.35))
+        text = "".join(decoder.feed(iq[i:i + block], float(rate), {"fam": "OOK"})
+                       for i in range(0, len(iq), block))
+        print(f"WAV: ton {tone:.1f} Hz, uppskattad takt "
+              f"{f'{decoder.wpm:.0f} ord/min' if decoder.wpm else 'okänd'}.")
+        print(f"Avkodad text: {text.strip() or '(ingen text)'}")
+    print("CW-avkodaren klarade 8–40 ord/min, brusiga OOK-block och CW-ljud med fading och brus.")
     return 0
 
 
@@ -428,7 +495,8 @@ def main():
     e.add_argument("--namn")
     e.add_argument("--kiwi", metavar="ADRESS")
     e.add_argument("--sekunder", type=float, default=20.0)
-    sub.add_parser("cw", help="testa CW-avkodning vid flera hastigheter och blockstorlekar")
+    cw = sub.add_parser("cw", help="testa CW-avkodningen, valfritt med en WAV-inspelning")
+    cw.add_argument("--wav", metavar="FIL", help="avkoda CW-ljud från en mono- eller stereo-WAV")
     args = p.parse_args()
     return {"mat": mat, "samla": samla, "spela-in": spela_in, "cw": testa_cw}[args.kommando](args)
 
