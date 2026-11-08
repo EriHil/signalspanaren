@@ -287,6 +287,12 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   python3 analystest.py spela-in --frekvens 7.1 --fam SSB --bredd 1800-3200 --namn "SSB 40 m"
   python3 analystest.py morse    mäter Morse-avkodarens teckenfel vid olika takt, brus,
                                  Farnsworth, handnyckling, frekvensfel och fädning
+  python3 cwjamfor.py klipp.wav  avkodar ett CW-klipp (WAV från KiwiSDR:ns rec, eller ett
+                                 SigMF-klipp) med både Signalspanaren och fldigi och visar
+                                 skillnaderna; --facit "TEXT" mäter båda mot känd text och
+                                 --syntetiskt kör fallen ovan med båda avkodarna. fldigi körs
+                                 utan skärm och kräver paketen fldigi, xvfb, pulseaudio och
+                                 pulseaudio-utils
   Klippen sparas i ~/.local/share/signalspanaren/facit-klipp/.
 
  Skärmanpassning
