@@ -70,34 +70,45 @@ def forvantan(fl):
     return None
 
 
-def kandidater(flaggfil, max_per_typ=20):
+def kandidater(flaggfil, max_per_typ=20, fran_khz=10.0, till_khz=30000.0):
+    """Kandidater ur flaggorna, högst max_per_typ per grupp (typ, familj), jämnt spridda över frekvens –
+    inte de lägsta (då hamnar allt på ett band som kan vara dött när man spelar in)."""
     with open(flaggfil, encoding="utf-8") as fh:
         d = json.load(fh)
     fl = d.get("flaggor", d) if isinstance(d, dict) else d
-    ut, per = [], {}
+    grupper = {}
     for x in sorted(fl, key=lambda x: x["f"]):
-        if not (10e3 <= x["f"] <= 30e6):
+        if not (fran_khz * 1e3 <= x["f"] <= till_khz * 1e3):
             continue
         v = forvantan(x)
         if v is None:
             continue
-        fam, bredd, mitt = v
-        grupp = (x.get("typ") or "?", fam[0])         # t.ex. Milcom: STANAG, MSK och fyrar var för sig
-        if per.get(grupp, 0) >= max_per_typ:
-            continue
-        per[grupp] = per.get(grupp, 0) + 1
+        grupper.setdefault((x.get("typ") or "?", v[0][0]), []).append((x, v))
+    valda = []
+    for lst in grupper.values():
+        if len(lst) > max_per_typ:
+            idx = np.unique(np.round(np.linspace(0, len(lst) - 1, max_per_typ)).astype(int))
+            lst = [lst[i] for i in idx]
+        valda += lst
+    ut = []
+    for x, (fam, bredd, mitt) in sorted(valda, key=lambda t: t[0]["f"]):
         ut.append({"namn": f"{x.get('namn', '')} {x['f'] / 1e3:g} kHz".strip(), "frekvens": round(mitt),
                    "fam": fam, "bredd": bredd, "flagga": x, "kandidat": True})
     return ut
 
 
 def spela(args):
-    lista = kandidater(args.flaggfil, args.max_per_typ)
+    lista = kandidater(args.flaggfil, args.max_per_typ, args.fran_khz, args.till_khz)
     if args.typ:
         lista = [k for k in lista if k["flagga"].get("typ") in args.typ]
     os.makedirs(INKORG, exist_ok=True)
-    gjorda = {json.load(open(os.path.join(INKORG, fn), encoding="utf-8"))["global"]
-              .get("signalspanaren:facit", {}).get("namn") for fn in os.listdir(INKORG) if fn.endswith(".sigmf-meta")}
+    gjorda = set()
+    for mp in (INKORG, GRANSKA, UTAN, MAPP, os.path.join(MAPP, "osakra")):   # även redan flyttade klipp
+        if os.path.isdir(mp):
+            for fn in os.listdir(mp):
+                if fn.endswith(".sigmf-meta"):
+                    m_ = json.load(open(os.path.join(mp, fn), encoding="utf-8"))["global"]
+                    gjorda.add((m_.get("signalspanaren:facit") or {}).get("namn"))
     print(f"{len(lista)} kandidater, {len(gjorda)} redan inspelade", flush=True)
     for i, k in enumerate(lista):
         if k["namn"] in gjorda:
@@ -316,12 +327,16 @@ def main():
     k = sp.add_parser("kandidater")
     k.add_argument("flaggfil")
     k.add_argument("--max-per-typ", type=int, default=20)
+    k.add_argument("--fran-khz", type=float, default=10.0)
+    k.add_argument("--till-khz", type=float, default=30000.0)
     s = sp.add_parser("spela")
     s.add_argument("flaggfil")
     s.add_argument("--kiwi", required=True)
     s.add_argument("--sek", type=float, default=20.0)
     s.add_argument("--max-per-typ", type=int, default=20)
     s.add_argument("--typ", nargs="*")
+    s.add_argument("--fran-khz", type=float, default=10.0)
+    s.add_argument("--till-khz", type=float, default=30000.0)
     sp.add_parser("sålla")
     b = sp.add_parser("bilder")
     b.add_argument("utmapp")
@@ -334,7 +349,7 @@ def main():
     g.add_argument("--bredd", help="byt facitbredd, t.ex. 1800-3400")
     a = p.parse_args()
     if a.cmd == "kandidater":
-        lst = kandidater(a.flaggfil, a.max_per_typ)
+        lst = kandidater(a.flaggfil, a.max_per_typ, a.fran_khz, a.till_khz)
         import collections
         print(collections.Counter((x["flagga"]["typ"], x["fam"][0]) for x in lst).most_common())
         for x in lst:

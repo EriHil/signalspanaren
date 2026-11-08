@@ -90,6 +90,9 @@
   - **Osäker gissning i stället för "Analyserar …":** efter ungefär 4 s visas analysens bästa gissning, märkt som osäker, även när ingen typ leder tydligt.
   - Kvar: CW 7083, RWM och PSK31 vid +6 dB ligger 1–4 dB över bruset och visas som brus. Två svaga SSB-klipp gissas som FSK (märkt osäkert).
 
+- **MSK känns igen** (VLF-stationer som DHO38, NAA och JXN). När signalen kvadreras ger MSK två jämnstarka spektrallinjer symmetriskt kring mitten, vid ±halva symboltakten (±100 Hz vid 200 Bd). Analysen tog dem förut för BPSK/QPSK. Linjeavståndet ska vara lika med den separat uppmätta symboltakten, och det skiljer MSK från vanlig FSK (RTTY 50 Bd ger 900 Hz). Upptäckt med det nya facitbiblioteket.
+- **Större facitbibliotek** (pågår, nytt verktyg `bibliotek.py`). Kandidater tas ur KiwiSDR:ns stationsflaggor och spelas in 20 s åt gången. Klipp utan synlig signal sållas bort. Resten granskas mot bilder av spektrum och vattenfall innan de blir facit, och osäkra klipp läggs i `osakra/`. Hittills har 10 nya klipp tillkommit (VLF-MSK, DCF77, DWD RTTY, PBB FSK, RWM).
+
 ## 2.12.0 (2026-11-07)
 
 - **DSP-filter** (ny fil `dspfilter.py`). Knappen **🎛 DSP-filter** under Demodulator visar en panel. Den svävar ovanpå den nedre delen av fönstret, så spektrum och vattenfall syns hela tiden. Allt går att ändra medan du lyssnar:

@@ -866,11 +866,27 @@ def analyze(z, fs, bw):
             psk = "BPSK"
             baud, bstr = float(fb_p), sb_p
             out["baud"], out["baud_styrka"] = baud, bstr
+    # MSK: z² har två jämnstarka linjer symmetriskt kring mitten, ±halva symboltakten (VLF-stationer
+    # 200 Bd: ±100 Hz, 38–46 dB i facit-klippen). PSK-testet ovan letar inom en radie som rymmer dem och
+    # tog dem för BPSK/QPSK. BPSK har sin starkaste linje mitt i (PSK31: 59 dB mot 46 dB i sidorna).
+    msk = _msk_par(zo, fs) if car < 14 and occ >= 40 else None
+    # FSK med två toner ger också ett symmetriskt linjepar (avstånd = 2·shift). MSK är FSK med h = 0,5:
+    # linjeavståndet är lika med symboltakten, som mäts för sig ur symbollinjerna (RTTY: 50 Bd mot 900 Hz)
+    if msk and not (baud and abs(baud / msk - 1.0) < 0.05):
+        msk = None
+    if msk:
+        psk = None
+        out["baud"], out["baud_styrka"] = msk, 30.0
+        baud = msk
+    out["msk"] = msk
     fsk_cv = 0.50 if (nlev == 2 and trans < 0.12) else 0.35
     fsk_baud = None
     if nlev >= 2 and shift and cv_c < fsk_cv and not psk:
         fsk_baud = _fsk_baud(fi_v, fs, tones)
-    if not psk and onoff and narrow and cv_c < 0.3 and nlev <= 1:
+    if msk:
+        fam = "MSK"
+        shift, nlev = msk / 2.0, 2
+    elif not psk and onoff and narrow and cv_c < 0.3 and nlev <= 1:
         fam = "OOK"
     elif narrow and cv_c < 0.2 and not onoff:
         fam = "BÄRVÅG"
@@ -1140,6 +1156,37 @@ def _sample(x, pos):
     ok = (i >= 0) & (i + 1 < len(x))
     i, fr = i[ok], fr[ok]
     return x[i] * (1 - fr) + x[i + 1] * fr
+
+
+def _msk_par(zo, fs, max_hz=2000.0):
+    """Symboltakten (Bd) om z² har ett symmetriskt linjepar kring mitten (MSK), annars None.
+    Kräver: båda linjerna minst 25 dB över medianen, högst 4 dB olika, och mitten minst 10 dB svagare."""
+    zo = np.asarray(zo, np.complex64)
+    n = len(zo)
+    if n < 1024:
+        return None
+    N = int(min(1 << 17, _pow2(2 * n)))
+    X = np.abs(np.fft.fftshift(np.fft.fft(zo.astype(np.complex128) ** 2, N))) ** 2
+    f = np.fft.fftshift(np.fft.fftfreq(N, 1 / fs))
+    sel = np.abs(f) <= min(max_hz, fs / 2.2)
+    f, X = f[sel], X[sel]
+    db = 10 * np.log10(X / (np.median(X) + 1e-30) + 1e-30)
+    res = fs / N
+    k1 = int(np.argmax(db))
+    utom = np.abs(f - f[k1]) > max(10.0, 6 * res)
+    if not utom.any():
+        return None
+    k2 = int(np.flatnonzero(utom)[np.argmax(db[utom])])
+    a, b = sorted((k1, k2), key=lambda k: f[k])
+    sep = float(f[b] - f[a])
+    mitt = float(f[a] + f[b]) / 2
+    if sep < 20.0 or min(db[a], db[b]) < 25.0 or abs(db[a] - db[b]) > 4.0 or abs(mitt) > 0.15 * sep:
+        return None
+    km = int(np.argmin(np.abs(f - mitt)))
+    w = max(1, int(round(3.0 / res)))
+    if float(db[max(0, km - w):km + w + 1].max()) > min(db[a], db[b]) - 10.0:
+        return None
+    return sep
 
 
 def _constellation(zo, fs, baud, f_line, n):
