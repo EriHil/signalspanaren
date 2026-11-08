@@ -40,6 +40,9 @@ IDX = {c: i for i, c in enumerate(ALFABET)}
 # ════════════════════════════════════════════════════════════════════
 # Data
 # ════════════════════════════════════════════════════════════════════
+VARIATION = True             # eko, AGC, läckande bärvåg, nära grannar i träningsdatan
+
+
 def exempel(seed, sek=8.0):
     """Ett slumpat band där station 0 (vid 0 Hz ± lite) har känd nyckling.
     Returnerar (z, [(t_start, t_slut, tecken)] för station 0)."""
@@ -81,19 +84,19 @@ def exempel(seed, sek=8.0):
     m = min(len(zs), len(zrest))
     z = zs[:m] + zrest[:m]
     # ── variation som riktiga signaler har men generatorn inte (annars generaliserar nätet inte) ──
-    if rng.random() < 0.3:             # station nästan på samma frekvens (5–60 Hz bort)
+    if VARIATION and rng.random() < 0.3:   # station nästan på samma frekvens (5–60 Hz bort)
         gr = G.Station(G.cq(rng) + " " + G.klartext(rng), wpm=float(rng.uniform(12, 35)),
                        off_hz=st.off_hz + float(rng.choice([-1, 1]) * rng.uniform(5, 60)),
                        niva_db=float(rng.uniform(-15, -3)), start_s=float(rng.uniform(-2, 2)))
         z = z + G.station_signal(gr, FS, m, rng)[0]
-    if rng.random() < 0.3:             # kvarvarande bärvåg i pauserna (läckande nyckling)
+    if VARIATION and rng.random() < 0.3:   # kvarvarande bärvåg i pauserna (läckande nyckling)
         z = z + 10 ** (rng.uniform(-30, -12) / 20) * np.exp(2j * np.pi * st.off_hz * tt[:m])
-    if rng.random() < 0.3:             # eko/efterklang (rum, högtalare, flervägsutbredning)
+    if VARIATION and rng.random() < 0.3:   # eko/efterklang (rum, högtalare, flervägsutbredning)
         L = int(FS * rng.uniform(0.02, 0.15))
         ir = (rng.standard_normal(L) + 1j * rng.standard_normal(L)) * np.exp(-np.arange(L) / (L / 4))
         ir[0] = 3.0
         z = np.convolve(z, ir / np.abs(ir).sum() * 3, mode="same")
-    if rng.random() < 0.3:             # snabb AGC: nivån dras ned under tonerna
+    if VARIATION and rng.random() < 0.3:   # snabb AGC: nivån dras ned under tonerna
         tau = int(FS * rng.uniform(0.05, 0.5))
         env = np.sqrt(np.convolve(np.abs(z) ** 2, np.ones(tau) / tau, mode="same")) + 1e-3
         z = z / env ** rng.uniform(0.5, 1.0)
@@ -311,11 +314,14 @@ def main():
     ap.add_argument("--spara", help="spara modellen (.keras)")
     ap.add_argument("--fran", metavar="MODELL", help="fortsätt träna en sparad modell (.keras)")
     ap.add_argument("--lr", type=float, default=3e-3, help="inlärningstakt i början")
+    ap.add_argument("--utan-variation", action="store_true", help="träningsdata utan eko/AGC/läckage/grannar")
     a = ap.parse_args()
     if a.typ == "lstm":
         lstm_pulser()
         return 0
-    print(f"Skapar {a.antal} träningsklipp (6 s) …", flush=True)
+    global VARIATION
+    VARIATION = not a.utan_variation
+    print(f"Skapar {a.antal} träningsklipp (6 s{'' if VARIATION else ', utan variation'}) …", flush=True)
     X, Y = datamangd(a.antal, 100000)
     Xv, Yv = datamangd(300, 900000)
     print(f"{len(X)} klipp, {sum(len(y) for y in Y)} tecken. Tränar {a.typ} …", flush=True)
