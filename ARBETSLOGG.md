@@ -171,3 +171,40 @@ cd /opt/ggmorse-src && g++ -O2 -std=c++17 -Iinclude -Isrc -Iexamples src/*.cpp \
 | Logg på GitHub utanför koden | Gjort (den här grenen) |
 | Miljö med uppstartsskript | Skapad ("signalspanaren"), ännu inte prövad i en ny session |
 | Ta bort IMG_0934.mov ur repot | Väntar på besked |
+
+---
+
+## 2026-11-08 (forts.) – CNN och LSTM, simulatorn på riktiga band
+
+### Simulatorn på riktiga band
+CW-bandet låg i FM-rundradiobandet (99,45 MHz), där analysen dessutom använder
+rundradiobandets regler. Flyttat till 40 m:s CW-del (7,0185–7,0395 MHz). En FAV22-lik
+station sänder "VVV DE FAV22", 20 träningsgrupper och "AR" parallellt på 3881 och
+6825 kHz. Provat i programmet på 3,881 MHz: CW/OOK 100 %, 32 Hz, 24 ord/min, 82 % rätt.
+
+### Neurala nät (`cwnn.py`, TensorFlow-CPU – PyTorch går inte att hämta här)
+
+| Teckenfel | Signalspanaren | CRNN (CNN+BiLSTM+CTC) | CNN (+CTC) |
+|---|---|---|---|
+| Medel, 16 scenarier | **8,3 %** | 17,5 % | 13,1 % |
+| Fladder (fav22) | 10,5 % | 3,8 % | **2,6 %** |
+| Tätt band | 24,3 % | 2,3 % | **1,0 %** |
+| Åskknaster | 7,5 % | 2,1 % | **1,1 %** |
+| Svag signal | **23,8 %** | 45,4 % | 26,4 % |
+| Station 6–40 Hz bort | **0,6–1,2 %** | 66–68 % | 52–53 % |
+| Riktig 40 m-QSO | **2,4 %** | 5,3 % | 7,7 % |
+| Riktig FAV22 (likhet med fldigi) | 52,5 % | 55,9 % | 55,9 % |
+
+LSTM på pulsföljder (klass per ton/paus): 89,6 % mot reglernas 87,5 % (RF/SVM/MLP 88,7 %).
+
+Erfarenheter:
+- CTC fastnar på bara blanktecken utan hög inlärningstakt (3e-3) och gradientklippning.
+  Ett rent CNN fastnade ändå, men lärde sig när det fick CRNN:ns faltningslager.
+- Första CRNN gav 100 % fel på riktiga klipp. Riktigt ljud har mycket lägre kontrast
+  mellan ton och paus (eko, ljudbehandling, läckage). Det löstes med normering per
+  frekvenskanal och träningsdata med eko, AGC, läckande bärvåg och nära grannar.
+- Nät och regler kompletterar varandra: näten är bättre vid fädning, tätt band och
+  åskknaster, reglerna vid svag signal, grannar några Hz bort och i medel.
+
+Inte gjort: näten är inte inbyggda i programmet (de kräver TensorFlow och
+GUI-integration). Ett tänkbart nästa steg är en hybrid som väljer metod efter läge.
