@@ -13,7 +13,7 @@
 - [ ] **Signalanalys: DSP-filter.** Lägg till en DSP-filterknapp i signalanalysen.
 - [ ] **SDR: stöd för fler enheter.** Undersök stöd för andra typer av SDR.
 - [ ] **SDR-dongel: konfigurera/uppdatera/felsöka.** Skapa en funktion som, när en SDR-dongel anslutits, låter programmet konfigurera och uppdatera dongeln (t.ex. drivrutiner) samt hjälpa till med felsökning.
-- [ ] **AI-felsökningskonsol.** En AI-funktion, typ en konsol, som kan hjälpa till med felsökning.
+- [ ] **AI-felsökningskonsol (SDR-hårdvara).** En AI-funktion, typ en konsol, som kan hjälpa till med felsökning av SDR-hårdvaran.
 - [ ] **ADS-B: luftrum och radioströmmar.** Undersök om ADS-B-vyn kan visa luftrumsområden/sektorer och kopplas till radioströmmar (t.ex. live-ATC) på webben, så att man kan följa ett flygplan och klicka på en kanal/frekvens för att öppna och lyssna på ljudströmmen.
 - [ ] **AIS/fartyg: sjöområden och marin VHF-strömmar.** Undersök om fartygsvyn (AIS) kan visa sjöområden/sektorer (t.ex. VTS) och kopplas till marin VHF-radioströmmar på webben, så att man kan följa ett fartyg och klicka på en kanal/frekvens för att öppna och lyssna på ljudströmmen.
 - [ ] **ADS-B: Flightradar-data.** Integrera Flightradar-data i ADS-B-vyn, med möjlighet att välja och sortera på signaltyp/datakälla.
