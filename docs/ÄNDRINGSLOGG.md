@@ -10,6 +10,7 @@
 - [ ] **Kom ihåg inställningar.** Kom ihåg senaste inställningarna, inklusive fönsterstorlek och fönsterposition.
 - [ ] **Analysrutan: informationsparametrar.** Förbättra urvalet av informationsparametrar som visas i analysrutan.
 - [ ] **Analysmotorn: stabilitet/träning.** Hitta fler sätt att träna analysmotorn – den fladdrar för mycket.
+- [ ] **ADS-B: luftrum och radioströmmar.** Undersök om ADS-B-vyn kan visa luftrumsområden/sektorer och kopplas till radioströmmar (t.ex. live-ATC) på webben, så att man kan följa ett flygplan och klicka på en kanal/frekvens för att öppna och lyssna på ljudströmmen.
 - [ ] **Granska de 31 osäkra facitklippen.** Bildserie genererad 2026-11-08 i
   `~/.local/share/signalspanaren/facit-klipp/osakra-bilder/` (6 bilder, 6 klipp per bild,
   `index.json`). Öppnas inte automatiskt. Efter beslut:
