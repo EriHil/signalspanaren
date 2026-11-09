@@ -330,6 +330,12 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0, lutning=False):
             and 200.0 <= r[1] < 0.4 * rs[1] and rs[0] - rs[1] / 2 <= r[0] <= rs[0] + rs[1] / 2:
         # (under 200 Hz: en egen smal signal – CW, bärvåg – bredvid eller ovanpå ett band, inte en bit av det)
         r = rs[:3]
+    # tätt band: mätningen har slagit ihop klicket med grannarna till ett brett band, men vid klicket finns
+    # ett äkta FSK-par (tonerna turas om) – då gäller paret
+    if r is not None and r[1] >= 400.0:
+        par = _fsk_par(z, fs, survey_bw, vaxling=True)
+        if par is not None and r[1] >= 1.6 * par[1]:
+            r = par
     return r
 
 
@@ -413,25 +419,29 @@ def _fsk_par(z, fs, survey_bw, max_shift=1200.0, vaxling=False):
     if len(f) < 16:
         return None
     floor = float(np.percentile(10 * np.log10(Ps + 1e-30), 20))
-    vl, hl = f < -20, f > 20
-    if not vl.any() or not hl.any():
-        return None
-    kl = np.flatnonzero(vl)[np.argmax(Pd[vl])]
-    kh = np.flatnonzero(hl)[np.argmax(Pd[hl])]
-    a, b = float(Pd[kl]), float(Pd[kh])
-    sep = float(f[kh] - f[kl])
-    if min(a, b) < floor + 6 or abs(a - b) > 15 or not (100.0 <= sep <= max_shift):
-        return None
-    if (vaxling or min(a, b) < floor + 10) and not _vaxlar(z, fs, nfft, float(f[kl]), float(f[kh])):
-        return None         # svaga toner: bara ett FSK-par om de turas om (två CW-stationer gör det inte)
-    # mellan tonerna ska det vara en svacka (annars är det en bred signal, inte två toner): minst 10 dB, eller
-    # för svaga toner minst 60 % av vägen ned till bruset
-    mellan = Pd[kl + 1:kh]
-    djup = min(10.0, 0.6 * (min(a, b) - floor))
-    if len(mellan) and float(np.median(mellan)) > min(a, b) - djup:
-        return None
-    mid = float(f[kl] + f[kh]) / 2
-    return mid, sep + 150.0, False
+    # närmaste paret först: i ett tätt band är de starkaste topparna längre bort ofta grannar
+    # (en CW-station på ena sidan, en annan RTTY på den andra), inte de egna tonerna
+    for halv in (150.0, 300.0, 600.0, max_shift):
+        vl, hl = (f < -20) & (f >= -halv), (f > 20) & (f <= halv)
+        if not vl.any() or not hl.any():
+            continue
+        kl = np.flatnonzero(vl)[np.argmax(Pd[vl])]
+        kh = np.flatnonzero(hl)[np.argmax(Pd[hl])]
+        a, b = float(Pd[kl]), float(Pd[kh])
+        sep = float(f[kh] - f[kl])
+        if min(a, b) < floor + 6 or abs(a - b) > 15 or not (100.0 <= sep <= max_shift):
+            continue
+        if (vaxling or min(a, b) < floor + 10) and not _vaxlar(z, fs, nfft, float(f[kl]), float(f[kh])):
+            continue        # svaga toner: bara ett FSK-par om de turas om (två CW-stationer gör det inte)
+        # mellan tonerna ska det vara en svacka (annars är det en bred signal, inte två toner): minst 10 dB,
+        # eller för svaga toner minst 60 % av vägen ned till bruset
+        mellan = Pd[kl + 1:kh]
+        djup = min(10.0, 0.6 * (min(a, b) - floor))
+        if len(mellan) and float(np.median(mellan)) > min(a, b) - djup:
+            continue
+        mid = float(f[kl] + f[kh]) / 2
+        return mid, sep + 150.0, False
+    return None
 
 
 def _vaxlar(z, fs, nfft, f1, f2):
@@ -1444,15 +1454,25 @@ class RttyAvkodare(Avkodare):
         o = np.argsort(f)
         f, P = f[o], _smooth(P[o], max(1, int(round(8.0 / (RR / nf)))))
         kand = [s for s in self.SHIFTAR if not sh or abs(s - sh) / s < 0.15] or [sh]
-        mitt = c0 if (feat and feat.get("f_mid") is not None) else self.c      # sök kring analysens mitt
+        # sök kring klicket (analysen kan flytta kanalens mitt mellan flera signaler i ett tätt band);
+        # klicket kan ligga på en av tonerna, så mitten får ligga en halv shift bort
+        if feat and feat.get("klick_off") is not None:
+            mitt, extra = float(feat["klick_off"]), True
+        else:
+            mitt, extra = (c0 if (feat and feat.get("f_mid") is not None) else self.c), False
         for s in kand:
-            cc = np.arange(mitt - 60, mitt + 60.1, 1.0)
+            w = 60.0 + (s / 2 if extra else 0.0)
+            cc = np.arange(mitt - w, mitt + w + 0.1, 1.0)
             # båda tonerna måste finnas (geometriskt medel): en stark granne på ena sidan räcker inte
             e = 2 * np.sqrt(np.interp(cc - s / 2, f, P) * np.interp(cc + s / 2, f, P))
+            e = e * 10 ** (-0.01 * np.abs(cc - mitt) / 10)      # liten fördel för par nära klicket
             k = int(np.argmax(e))
             # varje shift samlar poäng över tiden, så valet inte hoppar mellan analysstegen
             p0 = self.shpoang.get(s)
             v = 10 * math.log10(float(e[k]) / (float(np.median(P)) + 1e-30) + 1e-12)
+            # ett äkta FSK-par växlar: när den ena tonen hörs är den andra tyst (motsatt korrelerade
+            # nivåer). Två olika signaler (t.ex. CW-granne + en ton från en annan RTTY) gör inte så.
+            v += 10 * math.log10(self._vaxlar(float(cc[k]), s, n) + 0.05)
             self.shpoang[s] = (v if p0 is None else 0.8 * p0[0] + 0.2 * v, float(cc[k]), float(e[k]))
         s = max(kand, key=lambda q: self.shpoang[q][0])
         _, c, e = self.shpoang[s]
@@ -1467,6 +1487,19 @@ class RttyAvkodare(Avkodare):
         ton = 0.5 * (np.interp(self.c - s / 2, f2, P2) + np.interp(self.c + s / 2, f2, P2))
         ref = float(np.median(P2[np.abs(f2 - self.c) < max(600.0, s)])) + 1e-30
         self.snr = 10 * math.log10(max(float(ton), 1e-30) / ref)
+
+    def _vaxlar(self, c, s, n):
+        """Hur tydligt tonerna c ± s/2 växlar (0–1): minus korrelationen mellan deras nivåer."""
+        y = self.y[-n:]
+        t = np.arange(len(y)) / self.RR
+        L = max(1, int(self.RR * 0.008))
+        a = []
+        for f in (c + s / 2, c - s / 2):
+            m = y * np.exp(-2j * np.pi * f * t)
+            a.append(np.abs(_smooth(m.real, L) + 1j * _smooth(m.imag, L)))
+        if a[0].std() < 1e-12 or a[1].std() < 1e-12:
+            return 0.0
+        return max(0.0, -float(np.corrcoef(a[0], a[1])[0, 1]))
 
     # ── 2. tvåtonsdetektor med ATC ────────────────────────────────────
     def _beslut(self, baud):
@@ -2497,6 +2530,7 @@ class Analyzer:
         f_abs = tgt + feat.get("f_mid", 0.0)
         feat["f_abs"] = f_abs
         feat["target"] = tgt
+        feat["klick_off"] = getattr(self, "klick", tgt) - tgt     # där användaren klickade, rel. kanalens mitt
         ac = None
         if self.dial is not None and self.mode in ("USB", "LSB") and feat.get("fam") != "BRUS":
             ac = (f_abs - self.dial) if self.mode == "USB" else (self.dial - f_abs)
