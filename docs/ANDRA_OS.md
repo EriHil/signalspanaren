@@ -294,6 +294,17 @@ Idéer som inte är beslutade eller planerade. De samlas här för att väljas u
 | 15 | Utvärdering av AI-svaren | Spara svaren från AI-chatten tillsammans med facit och mät hur ofta AI:n har rätt. Kopplat till "AI-chatten: kortare svar" i att göra-listan i `docs/ÄNDRINGSLOGG.md`. | [ ] |
 | 16 | Rapport om fel klassningar | När användaren rättar analysen med "Klassa själv" sparas klippet som ett fall till `analystest.py`, lokalt och med användarens godkännande. | [ ] |
 
+### Ljudtjänster på nätet
+
+De här tjänsterna sänder **färdigt ljud**, inte IQ. Det blir därför ingen mottagare med vattenfall, frekvensinställning, analys eller avkodare, utan mer som internetradio. Hantera dem som websdr.org (`webbmottagare.py`, rad 15): ingenting byggs in utan tillstånd från tjänsten.
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 17 | LiveATC (flygradio) | MP3-strömmar från frivilliga mottagare vid flygplatser världen över. **Villkor (kontrollerat 2026-11-09):** licensen gäller bara personligt, icke-kommersiellt bruk. Den som vill länka direkt till en ström ombeds fråga LiveATC först, eftersom antalet anslutningar är begränsat och sidan lever på annonser och donationer. En forumtråd från 2025 citerar startsidan med att tredje parts användning är förbjuden (inte bekräftat på sidan). **Alternativ A, utan tillstånd:** en post i listan över webbmottagare som öppnar liveatc.net i webbläsaren, som vi gör med WebSDR. **Alternativ B, med skriftligt tillstånd från LiveATC:** en ljudkälla i programmet med lista över flygplatser och frekvenser. Kontakt: liveatc.net/ct/contact.php. | [ ] |
+| 18 | Broadcastify (blåljus, flyg, järnväg) | Cirka 7 000 liveflöden, nästan alla från USA. Svensk blåljusradio går på Rakel och är krypterad, så den finns inte där. **Villkor (kontrollerat 2026-11-09):** det finns två API:er. **Live Audio Feed Catalog API** godkänns inte för projekt som bygger en "parallell ingång" till deras liveljud, och Broadcastify skriver uttryckligen "No police scanner apps". **Broadcastify Calls Client API** (inspelade samtal från trunkade system) är självbetjäning via bcfy.io/dev/apply: det kräver ett konto, debiteras per användning, gäller bara appar för slutanvändare och får inte säljas vidare. Det är oklart om Premium krävs. **Alternativ A, utan tillstånd:** en länk till broadcastify.com i listan över webbmottagare. **Alternativ B:** Calls Client API med användarens egen utvecklarnyckel, sparad som AI-nycklarna i `ai.py` (rättigheter 600). Värdet för svenska användare är litet. | [ ] |
+
+**Svensk lag (gäller båda):** att lyssna är tillåtet. Enligt lagen om elektronisk kommunikation får innehåll i radiotrafik som inte är avsedd för en själv inte spridas eller utnyttjas. Programmet bör därför inte spela in eller dela ljudet från dessa tjänster automatiskt.
+
 ## 9. Där Signalspanaren redan är bäst
 
 - Ett program där allt hänger ihop: vattenfall, skanner, logg, analys, avkodning och kartor delar samma data.
@@ -316,5 +327,7 @@ Idéer som inte är beslutade eller planerade. De samlas här för att väljas u
 - inspectrum: <https://github.com/miek/inspectrum>, URH: <https://github.com/jopohl/urh>
 - gr-inspector: <https://github.com/gnuradio/gr-inspector>, FISSURE: <https://github.com/ainfosec/FISSURE>, <https://fissure.readthedocs.io/>
 - Avsnitt 7: licens och datum lästa ur projektens källkod (git, 2026-11-09).
+- LiveATC: <https://liveatc.net/legal>, <https://liveatc.net/faq>, <https://forums.liveatc.net/listener-forum/permission-to-use-liveatc-audio-streams>
+- Broadcastify: <https://support.broadcastify.com/hc/en-us/articles/204740425-Live-Audio-Feed-Catalog-API>, <https://support.broadcastify.com/hc/en-us/articles/50488286518427-Broadcastify-Calls-Client-API>, <https://www.broadcastify.com/calls/dev/>, <https://www.broadcastify.com/>, <https://forums.radioreference.com/threads/other-apps-taking-and-reusing-broadcastify-streams.447737>
 
 Verktygslistorna för DragonOS bygger delvis på äldre artiklar och kan skilja sig från den senaste ISO:n (Noble R7/R8). SigintOS 2.0 saknar en publik funktionslista.
