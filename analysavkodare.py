@@ -391,42 +391,68 @@ def pocsag_encode(data21):
     return cw
 
 
-class PocsagAvkodare(FiAvkodare):
+class PocsagAvkodare(A.TvatonsBas, FiAvkodare):
+    """POCSAG 512/1200/2400 Bd. Bitbesluten kommer från TvatonsBas (ett filter per ton, nivå per ton,
+    tonsökning kring klicket) i stället för frekvensdiskriminator: klarar svaga signaler bättre, och en
+    stark station i grannkanalen fångar inte avkodaren. Alla tre takterna körs parallellt; synkordet
+    och BCH-kontrollen avgör (fel takt synkar inte)."""
     namn = "POCSAG"
     RATES = (512, 1200, 2400)
+    SHIFTAR = (6000.0, 7000.0, 8000.0, 9000.0, 9600.0)     # deviation ±3–4,8 kHz
+    RR = 24000.0
+    SOK_BAS = 2000.0                                        # sändaren kan ligga ett par kHz fel
+    SOK_STEG = 20.0
+    HIST_S = 3.0
+    MIN_SNR = -99.0    # ingen brusspärr: tonerna är breda (toppen syns dåligt), och synkordet och BCH
+                       # släpper ändå inte igenom skräp
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        super().reset()
-        self.clk = None
+        FiAvkodare.reset(self)
+        self._tva_reset()
+        self.spar = {r: {"clk": None, "ptr": None, "bits": [[], []], "state": [None, None]} for r in self.RATES}
         self.rate = None
-        self.bits = [[], []]
-        self.state = [None, None]
         self.n_msgs = 0
         self.pol = None
 
     def passar(self, feat):
         b, s = feat.get("baud"), feat.get("shift")
-        if feat.get("fam") not in ("FSK2", "MSK") or not b:
+        if feat.get("fam") not in ("FSK2", "MSK"):
             return False
-        return any(abs(b - r) / r < 0.04 for r in self.RATES) and (not s or 2000 <= s <= 12000)
+        # bred FSK (2–12 kHz shift) räcker: takten avgörs av synkordet (analysens takt är osäker)
+        return (not s or 2000 <= s <= 12000) and (not b or any(abs(b - r) / r < 0.1 for r in self.RATES)
+                                                    or (s and s >= 2000))
 
     def feed(self, z, fs, feat):
-        b = feat.get("baud") or self.rate or 1200
-        rate = min(self.RATES, key=lambda r: abs(r - b))
-        if rate != self.rate:
-            self.rate = rate
-            self.clk = SymClock(fs / rate)
-        lv = self.levels_from(feat, 2, 9000)
-        v = self._fi(z, fs, fs / rate / 4)
-        syms = self.clk.run(v, lv)
+        if not self._tva_mata(z, fs, feat):
+            return ""
         out = []
-        for pol in (0, 1):
-            # POCSAG: binär 1 = lägre frekvens (normal polaritet = pol 0)
-            self.bits[pol] += [(1 - k) if pol == 0 else k for k in syms]
-            out.append(self._scan(pol))
+        marg = int(self.ATC_S * self.RR / 2) + 1
+        for rate, sp in self.spar.items():
+            x = self._beslut(float(rate))
+            if sp["ptr"] is None or sp["ptr"] < self.base:
+                sp["ptr"] = self.base
+            a, b = sp["ptr"] - self.base, len(x) - marg
+            if b <= a:
+                continue
+            sp["ptr"] += b - a
+            if self.snr < self.MIN_SNR:
+                sp["clk"] = None
+                continue
+            if sp["clk"] is None:
+                sp["clk"] = SymClock(self.RR / rate)
+            syms = sp["clk"].run(x[a:b], (-1.0, 1.0))      # 1 = högre tonen
+            self.bits, self.state = sp["bits"], sp["state"]
+            for pol in (0, 1):
+                # POCSAG: binär 1 = lägre frekvens (normal polaritet = pol 0)
+                self.bits[pol] += [(1 - k) if pol == 0 else k for k in syms]
+                txt = self._scan(pol)
+                if txt or (self.pol is not None and self.rate is None):
+                    self.rate = rate                     # den takt som synkar
+                out.append(txt)
+        self._trimma(min(sp["ptr"] for sp in self.spar.values() if sp["ptr"] is not None))
         return "".join(out)
 
     def _scan(self, pol):
@@ -516,6 +542,8 @@ class PocsagAvkodare(FiAvkodare):
         return self.pol is not None
 
     def fakta(self):
+        if not self.rate:
+            return {}
         return {"baud": float(self.rate), "fam": "FSK2", "klass": f"2-FSK (POCSAG {self.rate} Bd)"}
 
     def varden(self):
@@ -524,7 +552,17 @@ class PocsagAvkodare(FiAvkodare):
 
 def make_pocsag(fs, rate, pages, shift=9000.0):
     """Testsignal: [(adress, funktion, text eller None, numeriskt?)]."""
-    bits = [1, 0] * 288
+    bits = pocsag_bitar(pages)
+    sps = fs / rate
+    n = int(len(bits) * sps)
+    idx = np.minimum((np.arange(n) / sps).astype(np.int64), len(bits) - 1)
+    f = np.where(np.asarray(bits)[idx] == 1, -shift / 2, shift / 2)
+    return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
+
+
+def pocsag_bitar(pages, ingress=288):
+    """POCSAG-bitar för sidorna: ingress (1010…), batcher med synkord, adress- och meddelandekodord."""
+    bits = [1, 0] * ingress
     cws = []
     for addr, func, text, numeric in pages:
         frame = addr & 7
@@ -537,6 +575,8 @@ def make_pocsag(fs, rate, pages, shift=9000.0):
                 for ch in text:
                     v = rev[ch]
                     data += [(v >> k) & 1 for k in range(4)]
+                while len(data) % 20:                     # fyll ut med mellanslag (som riktiga sändare)
+                    data += [(12 >> k) & 1 for k in range(4)]
             else:
                 for ch in text:
                     data += [(ord(ch) >> k) & 1 for k in range(7)]
@@ -561,11 +601,7 @@ def make_pocsag(fs, rate, pages, shift=9000.0):
         for cw in [POCSAG_SYNC] + batch:
             bits += [(cw >> (31 - k)) & 1 for k in range(32)]
     bits += [1, 0] * 32
-    sps = fs / rate
-    n = int(len(bits) * sps)
-    idx = np.minimum((np.arange(n) / sps).astype(np.int64), len(bits) - 1)
-    f = np.where(np.asarray(bits)[idx] == 1, -shift / 2, shift / 2)
-    return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
+    return bits
 
 
 # ════════════════════════════════════════════════════════════════════

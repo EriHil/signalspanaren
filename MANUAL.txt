@@ -257,7 +257,9 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
                        Hela meddelanden (ZCZC … NNNN) med ämne, t.ex.
                        navigationsvarning eller väderprognos
         POCSAG ....... personsökare 512/1200/2400 Bd: adress (RIC), funktion
-                       och text eller siffror (kontrollsumman BCH rättar 1 fel)
+                       och text eller siffror (kontrollsumman BCH rättar 1 fel).
+                       Ett filter per ton: tål fädning och en stark granne i
+                       närmaste kanal; alla takter och polariteter provas
         ALE 2G ....... MIL-STD-188-141 (8-FSK 125 Bd, Golay + trippelredundans):
                        anrop och sonderingar, t.ex. "HQ1 anropar SM5XYZ".
                        Fungerar i både USB och LSB
@@ -331,6 +333,9 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
                                  psk63) med pskgenerator.py
   python3 rttygenerator.py --scen dwd --ut x.wav   syntetisk RTTY med facit (x.txt)
   python3 pskgenerator.py --scen trangt --ut x.wav syntetisk PSK31 med facit (x.txt)
+  python3 analystest.py pocsag   mäter POCSAG (ren, 512, 2400, svag, fadning, frekvensfel, omvand,
+                                 mjuk, granne) med pocsaggenerator.py
+  python3 pocsaggenerator.py --scen fadning --ut x.wav  syntetisk POCSAG (IQ) med facit (x.txt)
   python3 cwtrana.py '{"FILTER": [0.4, 0.5, 0.6]}'
                                  tränar Morse-avkodarens inställningar: rutnätssökning mot
                                  fallen i analystest.py morse, generatorns scenarier och de

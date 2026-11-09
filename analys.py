@@ -1399,6 +1399,8 @@ class TvatonsBas(Avkodare):
     ATC_S = 0.35       # s, fönster för tonernas nivå (tränat: kortare klarar selektiv fädning)
     MIN_SNR = 3.0      # dB, tonparet måste synas över bruset
     NB = 4.0           # störningsspärr: nollar sampel starkare än NB × normal nivå
+    SOK_BAS = 60.0     # Hz: tonparets mitt söks så här långt från klicket (+ halva shiften)
+    SOK_STEG = 1.0     # Hz, steg i sökningen
 
     def _tva_reset(self):
         self.acc = np.zeros(0, np.complex64)
@@ -1469,8 +1471,8 @@ class TvatonsBas(Avkodare):
         else:
             mitt, extra = (c0 if (feat and feat.get("f_mid") is not None) else self.c), False
         for s in kand:
-            w = 60.0 + (s / 2 if extra else 0.0)
-            cc = np.arange(mitt - w, mitt + w + 0.1, 1.0)
+            w = self.SOK_BAS + (s / 2 if extra else 0.0)
+            cc = np.arange(mitt - w, mitt + w + 0.1, self.SOK_STEG)
             # båda tonerna måste finnas (geometriskt medel): en stark granne på ena sidan räcker inte
             e = 2 * np.sqrt(np.interp(cc - s / 2, f, P) * np.interp(cc + s / 2, f, P))
             e = e * 10 ** (-0.01 * np.abs(cc - mitt) / 10)      # liten fördel för par nära klicket
