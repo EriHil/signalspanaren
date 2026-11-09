@@ -10,6 +10,7 @@
 - [ ] **Kom ihåg inställningar.** Kom ihåg senaste inställningarna, inklusive fönsterstorlek och fönsterposition.
 - [ ] **Analysrutan: informationsparametrar.** Förbättra urvalet av informationsparametrar som visas i analysrutan.
 - [ ] **Analysmotorn: stabilitet/träning.** Hitta fler sätt att träna analysmotorn – den fladdrar för mycket.
+- [ ] **Signalanalys: DSP-filter.** Lägg till en DSP-filterknapp i signalanalysen.
 - [ ] **ADS-B: luftrum och radioströmmar.** Undersök om ADS-B-vyn kan visa luftrumsområden/sektorer och kopplas till radioströmmar (t.ex. live-ATC) på webben, så att man kan följa ett flygplan och klicka på en kanal/frekvens för att öppna och lyssna på ljudströmmen.
 - [ ] **AIS/fartyg: sjöområden och marin VHF-strömmar.** Undersök om fartygsvyn (AIS) kan visa sjöområden/sektorer (t.ex. VTS) och kopplas till marin VHF-radioströmmar på webben, så att man kan följa ett fartyg och klicka på en kanal/frekvens för att öppna och lyssna på ljudströmmen.
 - [ ] **ADS-B: Flightradar-data.** Integrera Flightradar-data i ADS-B-vyn, med möjlighet att välja och sortera på signaltyp/datakälla.
