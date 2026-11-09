@@ -4,6 +4,7 @@
 
 - [ ] **Pejl/TDoA.** Få riktpejlingen (TDoA/KiwiSDR) att fungera. Funktionen är **dold i gränssnittet** tills vidare (kod finns kvar lokalt: `pejl_tdoa.py`, `signatur.py`, `PejlWindow` i `signalspanaren.py`), eftersom den inte fungerar ännu.
 - [ ] **Signalchatt.** Skapa en signalchatt.
+- [ ] **Analysrutan: verktygstips.** När man håller muspekaren över knappar eller symboler i analysrutan ska namnet/funktionen visas (tooltip).
 - [ ] **Granska de 31 osäkra facitklippen.** Bildserie genererad 2026-11-08 i
   `~/.local/share/signalspanaren/facit-klipp/osakra-bilder/` (6 bilder, 6 klipp per bild,
   `index.json`). Öppnas inte automatiskt. Efter beslut:
