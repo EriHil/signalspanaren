@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 import ai
 import flaggor
@@ -27,6 +28,22 @@ class AnalysisDataTests(unittest.TestCase):
         self.assertIn("119:1.00", text)
         self.assertIn("40 punkter", text)
         self.assertIn("1.00:1.00", text)
+
+    def test_chat_prompt_requires_grounding_uncertainty_and_conciseness(self):
+        prompt = ai.systemprompt("SNR: 18.4 dB")
+        self.assertIn("hitta inte på mätvärden", prompt)
+        self.assertIn("högst 80 ord", prompt)
+        self.assertIn("flagga eller databaskandidat bevisar aldrig", prompt)
+        self.assertIn("identiteten inte kan bekräftas", prompt)
+        self.assertIn("uttryckligen har bekräftat", prompt)
+
+    def test_suggestion_requires_expected_string_fields_and_is_bounded(self):
+        self.assertIsNone(ai.forslag_ur('FÖRSLAG={"namn":"VOLMET"}'))
+        self.assertIsNone(ai.forslag_ur('FÖRSLAG={"namn":["VOLMET"],"typ":"Flyg","not":""}'))
+        result = ai.forslag_ur(
+            'FÖRSLAG={"namn":"' + "N" * 100 + '","typ":"Flyg","not":"' + "x" * 300 + '"}')
+        self.assertEqual(len(result["namn"]), 60)
+        self.assertEqual(len(result["not"]), 200)
 
 
 class AISearchTests(unittest.TestCase):
@@ -68,6 +85,38 @@ class AISearchTests(unittest.TestCase):
     def test_invalid_search_response_raises(self):
         with self.assertRaises(ValueError):
             ai.sok_tolka("no JSON", [])
+
+
+class DeepSeekTests(unittest.TestCase):
+    def test_deepseek_chat_uses_selected_model_and_bearer_key(self):
+        response = {"choices": [{"message": {"content": "Analys"}}]}
+        cfg = {
+            "aktiv": True,
+            "backend": "deepseek",
+            "deepseek_modell": "deepseek-flash",
+            "deepseek_api_key": "test-key",
+        }
+        with mock.patch.object(ai, "_post", return_value=response) as post:
+            result = ai.svar(cfg, [{"role": "user", "content": "Analysera signalen"}], "system")
+
+        self.assertEqual(result, "Analys")
+        args, _kwargs = post.call_args
+        self.assertEqual(args[0], ai.DEEPSEEK_URL)
+        self.assertEqual(args[1]["model"], "deepseek-flash")
+        self.assertEqual(args[2]["Authorization"], "Bearer test-key")
+
+    def test_deepseek_requires_api_key_without_network_request(self):
+        cfg = {"aktiv": True, "backend": "deepseek", "deepseek_api_key": ""}
+        with mock.patch.object(ai, "_post") as post:
+            with self.assertRaisesRegex(RuntimeError, "ingen API-nyckel för DeepSeek"):
+                ai.svar(cfg, [], "system")
+        post.assert_not_called()
+
+    def test_deepseek_is_available_in_config_and_model_choices(self):
+        cfg = ai.las_config("/path/that/does/not/exist")
+        self.assertEqual(cfg["deepseek_modell"], "deepseek-flash")
+        self.assertIn(("deepseek", "deepseek-flash"), ai.val_modeller(cfg))
+        self.assertIn("DeepSeek", ai.beskrivning({**cfg, "backend": "deepseek"}))
 
 
 if __name__ == "__main__":

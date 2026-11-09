@@ -16,7 +16,8 @@
 - [x] **AI-chatten.** Verifierad på riktiga STANAG 4285- och Shannon VOLMET-inspelningar. Histogrammet anger nu basbandets frekvensavvikelse och normaliserade binvärden; envelopen anger tidsaxel och amplitudskala, eller att diagrammet saknas. AI-testet tolkade axlarna rätt efter förtydligandet.
 - [ ] **Claude-läget.** Testas med användarens egen API-nyckel och modell-ID. Modell-ID är tomt som standard.
 - [x] **AI-sök efter tjänst eller signaltyp.** AI:n rangordnar relevanta synliga Kiwi- och egna flaggor ur en begränsad kandidatlista genom att returnera validerade ID:n; namn, frekvens och läge visas från flaggdatan, inte AI:ns fria text. Resultaten grupperas efter Kiwi-typ. Flaggor är ledtrådar, inte facit. Val av träff ställer in och startar mottagningen så den kan verifieras i vattenfallet och analysen. En ren modulationssökning, till exempel FSK, visar signaltyper som använder modulationen. Handtest på aktiv Kiwi: 980 flaggor, 10 VOLMET-kandidater; RAF VOLMET-flaggan på 11,253 MHz gav en live SSB-mätning på 31 dB SNR, men sändningens tjänst kunde inte bekräftas. Sökningens format och kandidatval har enhetstester.
-- [ ] **AI-chatten: kortare svar.** Gratis-AI:n skriver långa svar och ibland påhittade detaljer. Prompten behöver skärpas.
+- [x] **AI-chatten: kortare och mer grundade svar.** Prompten begär högst 80 ord, skiljer mätdata från hypotes och förbjuder påhittade värden eller slutsatser om aktuell sändning utifrån en flagga. Förslag att spara kräver uttrycklig bekräftelse och förslagsfälten valideras och begränsas. Liveprov gav 59 ord, avstod från att bekräfta RAF VOLMET och lade inte till någon sparningsrad.
+- [ ] **DeepSeek i AI-chatten.** DeepSeek kan väljas som leverantör med egen API-nyckel. Chatttext, mätvärden och avkodad text skickas till DeepSeek; ljud- och IQ-data skickas inte. Kontrollera aktuella priser och datavillkor hos leverantören.
 
 ## Ej släppt
 

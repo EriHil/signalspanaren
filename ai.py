@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """AI-chatt för signalanalysen. Standard: gratis online-AI utan nyckel (Pollinations).
-Valbart: Groq, Gemini och OpenRouter med egen API-nyckel. Alla val har en gratisnivå;
-modeller som kräver betalning finns inte med. Nycklarna sparas med filrättigheter 600 och loggas aldrig."""
+Valbara leverantörer inkluderar Groq, Gemini, OpenRouter och DeepSeek. Nycklarna
+sparas med filrättigheter 600 och loggas aldrig."""
 import json
 import math
 import os
@@ -14,12 +14,14 @@ GRATIS_URL = "https://text.pollinations.ai/openai"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 STANDARD = {"aktiv": True, "backend": "gratis", "gratis_modell": "openai",
             "groq_modell": "openai/gpt-oss-20b", "groq_api_key": "",
             "gemini_modell": "gemini-3.8-flash", "gemini_api_key": "",
-            "openrouter_modell": "nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter_api_key": ""}
+            "openrouter_modell": "nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter_api_key": "",
+            "deepseek_modell": "deepseek-flash", "deepseek_api_key": ""}
 NAMN = {"gratis": "Gratis (Pollinations)", "groq": "Groq", "gemini": "Gemini",
-        "openrouter": "OpenRouter"}
+        "openrouter": "OpenRouter", "deepseek": "DeepSeek"}
 # Endast gratismodeller. Modeller som kräver betalning finns inte med i listan.
 MODELLER = {"gratis": ["openai"],
             "groq": ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
@@ -35,7 +37,8 @@ MODELLER = {"gratis": ["openai"],
                            "liquid/lfm-3-1.7b:free",
                            "xingchen-agi/xing4.0-29b-a4b:free",
                            "google/gemma-4-26b-a4b-it:free",
-                           "google/gemma-4-31b-it:free"]}
+                           "google/gemma-4-31b-it:free"],
+            "deepseek": ["deepseek-flash"]}
 INFO = {"gratis": "Ingen nyckel krävs. Ett svar åt gången, ungefär var 30–45 s. Analysdata skickas till Pollinations.",
         "groq": "Gratis API-nyckel från console.groq.com, ingen betalmetod krävs för gratisnivån. "
                 "Analysdata skickas till Groq.",
@@ -43,14 +46,24 @@ INFO = {"gratis": "Ingen nyckel krävs. Ett svar åt gången, ungefär var 30–
                   "produkter, så skicka inget känsligt. Analysdata skickas till Google.",
         "openrouter": "Gratis API-nyckel från openrouter.ai. Listan innehåller bara gratismodeller; en del kan "
                       "vara tillfälligt upptagna (HTTP 429). Data från gratismodellerna kan användas för att "
-                      "förbättra modellerna, så skicka inget känsligt. Analysdata skickas till OpenRouter."}
+                      "förbättra modellerna, så skicka inget känsligt. Analysdata skickas till OpenRouter.",
+        "deepseek": "DeepSeek API-nyckel krävs. Kontrollera aktuella priser och datavillkor hos DeepSeek. "
+                    "Chatttext, mätvärden och avkodad text skickas till DeepSeek; ljud och IQ skickas inte."}
 SYSTEM = ("Du är en assistent i programmet Signalspanaren för radioanalys. Svara på svenska och var tydlig med "
-          "vad som är mätt och vad som är en gissning. Klassa aldrig en signal som säker utan tydliga belägg. "
+          "vad som är mätt och vad som är en hypotes. Använd bara mätvärden och flagguppgifter som faktiskt står "
+          "i underlaget; hitta inte på mätvärden, diagram, sändningstider, stationer, tekniska detaljer eller avkodad text. "
+          "En flagga eller databaskandidat bevisar aldrig vilken tjänst som sänder just nu. Skilj allmän bakgrundskunskap "
+          "från slutsatser om den aktuella signalen. På frågan om identitet: utan ett särskiljande belägg i analysen, "
+          "svara att identiteten inte kan bekräftas. Hitta inte på externa frekvenslistor eller testmetoder. "
+          "Föreslå högst ett enkelt nästa steg som går att utföra i Signalspanaren. "
+          "Svara med högst 80 ord under rubrikerna Mätdata, Hypotes och Nästa steg; skriv kort och bara relevant. "
+          "Klassa aldrig en signal som säker utan tydliga belägg. "
           "Histogrammets frekvensvärden är momentan frekvensavvikelse i basbandet relativt den isolerade signalens "
           "centrum efter nedblandning, inte stationens RF-frekvens. Histogramvärdena är antal per bin normaliserade "
           "så att högsta bin är 1. Envelopens x-värden är sekunder från äldst till nyast och y-värdena är amplitud "
           "normaliserad mot 95-percentilen. Om ett diagram saknas i underlaget får du inte hitta på dess värden eller axlar. "
-          "När användaren och du är överens om vilken signal det är, avsluta svaret med en egen rad som börjar med FÖRSLAG= "
+          "Skriv bara FÖRSLAG-raden om användaren uttryckligen har bekräftat signaltypen och bett om att spara den. "
+          "Då avslutar du svaret med en egen rad som börjar med FÖRSLAG= "
           "direkt följt av ett JSON-objekt på samma rad med nycklarna namn, typ och not. Skriv ingen FÖRSLAG-rad annars. "
           "Skriv aldrig att något har sparats. Det gör användaren med knappen.")
 
@@ -84,7 +97,16 @@ def forslag_ur(text):
         d = json.loads(m.group(1))
     except ValueError:
         return None
-    return d if isinstance(d, dict) and str(d.get("namn", "")).strip() else None
+    if not isinstance(d, dict):
+        return None
+    namn = d.get("namn")
+    typ = d.get("typ")
+    notering = d.get("not")
+    if not isinstance(namn, str) or not namn.strip():
+        return None
+    if not isinstance(typ, str) or not isinstance(notering, str):
+        return None
+    return {"namn": namn.strip()[:60], "typ": typ.strip()[:60], "not": notering.strip()[:200]}
 
 
 def sammanfattning(r, klartext=""):
@@ -310,12 +332,13 @@ def svar(cfg, meddelanden, system):
     """Skickar chatten till vald backend och returnerar svaret som text."""
     if not cfg.get("aktiv", True):
         raise RuntimeError("AI-chatten är avstängd (slå på den under inställningar)")
-    if cfg.get("backend") in ("groq", "gemini", "openrouter"):
+    if cfg.get("backend") in ("groq", "gemini", "openrouter", "deepseek"):
         b = cfg["backend"]
         nyckel = cfg.get(nyckel_falt(b), "")
         if not nyckel:
             raise RuntimeError(f"ingen API-nyckel för {NAMN[b]} (ställ in den under inställningar)")
-        d = _post({"groq": GROQ_URL, "gemini": GEMINI_URL, "openrouter": OPENROUTER_URL}[b],
+        d = _post({"groq": GROQ_URL, "gemini": GEMINI_URL, "openrouter": OPENROUTER_URL,
+                   "deepseek": DEEPSEEK_URL}[b],
                   {"model": cfg.get(f"{b}_modell") or MODELLER[b][0],
                    "messages": [{"role": "system", "content": system}] + meddelanden},
                   {"Authorization": f"Bearer {nyckel}"})
