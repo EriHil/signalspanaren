@@ -208,3 +208,58 @@ Erfarenheter:
 
 Inte gjort: näten är inte inbyggda i programmet (de kräver TensorFlow och
 GUI-integration). Ett tänkbart nästa steg är en hybrid som väljer metod efter läge.
+
+---
+
+## 2026-11-09 – RTTY med samma metoder som CW
+
+### Byggt
+- **`rttygenerator.py`**: syntetisk RTTY med facit. Varierar takt (45,45/50/75/100 Bd),
+  shift, polaritet, stoppbitar (1/1,5/2), taktfel, drift, selektiv fädning (mark och space
+  fädar var för sig), QSB, åskknaster och grannar (CW och RTTY). Innehåller 11 scenarier.
+- **Ny `RttyAvkodare`**, som lär sig signalen själv:
+  - Tonparet finjusteras ur spektrumet, kring klicket. Båda tonerna måste finnas och
+    turas om.
+  - Ett filter per ton med nivå per ton (ATC) i stället för frekvensdiskriminator.
+  - Ramsynk körs parallellt för alla takter och båda polariteterna. Poängen är andel
+    godkända ramar × hur tydliga bitarna är i mitten.
+  - Störningsspärr mot knaster, och brusspärr så att inget skrivs efter sändningen.
+  - 1 stoppbit fungerar nu.
+- **Analysen i tätt band**: `_fsk_par` söker närmaste tonpar först. Ett äkta FSK-par vid
+  klicket går före en hopslagen bred mätning.
+- **`analystest.py rtty`** mäter genom hela analyskedjan, som i programmet.
+- **fldigi som referens för RTTY**: `cwjamfor.Fldigi.rtty()` med säker omstart. 450 Hz
+  körs i 425 Hz-läget, och brusspärren står på nivå 10.
+- **Simulatorn**: DWD-lik väderstation på 10,1008 och 4,583 MHz, amatör-RTTY på 14,083
+  och 14,0865 MHz.
+
+### Fynd
+1. Analysens takt hoppade mellan 43, 45,5 och 47,8 Bd, och 47,8 rundades inte av till
+   45,45 (gränsen var 5 %). Varje hopp nollställde den gamla avkodaren.
+2. Analysens mitt var 12 Hz fel, så tröskeln låg snett.
+3. Fel takt ramar ofta "rätt": start- och stoppbit träffar men databitarna glider.
+   Lösningen var att mäta hur tydliga bitarna är i mitten.
+4. RYRY ramar med båda polariteterna. RYRY-texten och analysens takt avgör vid första synk.
+5. I tätt band flyttade analysen kanalens mitt till klungans mitt. Den egna signalen låg
+   då utanför avkodarens sökfönster, och analysens FSK-par-sökning valde grannarna.
+
+### Resultat (teckenfel genom hela analyskedjan; fldigi fick takt/shift/stopp/polaritet)
+
+| Scenario | Gamla | Nya | fldigi |
+|---|---|---|---|
+| ren | 14,2 % | 0,7 % | 1,3 % |
+| dwd (50 Bd/450 Hz) | 65,9 % | 1,1 % | 4,2 % |
+| amator (QSB) | 37,4 % | 1,2 % | 0,7 % |
+| svag | 100 % | 26 % (10 % i fldigi-körningen) | 44,6 % |
+| selektiv fädning | 44,7 % | 7,8 % | 54,8 % |
+| omvänd polaritet | 51,1 % | 0,7 % | 0,3 % |
+| drift | 25,9 % | 0,7 % | 0,0 % |
+| tätt band | 100 % | 0,9 % | 0,3 % |
+| åskknaster | 71,4 % | 4,0 % | 56,2 % |
+| 75 Bd/850 Hz | 74,0 % | 2,2 % | 3,3 % |
+| 2 stoppbitar | 2,7 % | 6,8 % | 57,1 % |
+| **Medel** | **53,4 %** | **4,8 %** | **20,3 %** |
+
+Kvar att göra: svag signal (26 %). Signalspanaren missar de första sekunderna medan
+analysen klassar, men fldigi ska ställas in för hand. Nästa modulationstyp enligt planen:
+NAVTEX/SITOR-B, PSK31 och POCSAG (multimon-ng som referens).
