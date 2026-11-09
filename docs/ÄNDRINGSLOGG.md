@@ -7,6 +7,7 @@
 - [ ] **Analysrutan: verktygstips.** När man håller muspekaren över knappar eller symboler i analysrutan ska namnet/funktionen visas (tooltip).
 - [ ] **Diagramrutan: visningsval.** Alla de olika visningsvalen i diagramrutan fungerar inte.
 - [ ] **Signaturen växlar.** Signaturen växlar hela tiden (onödig/ostabil text) – behöver stabiliseras eller döljas när den inte behövs.
+- [ ] **Kom ihåg inställningar.** Kom ihåg senaste inställningarna, inklusive fönsterstorlek och fönsterposition.
 - [ ] **Granska de 31 osäkra facitklippen.** Bildserie genererad 2026-11-08 i
   `~/.local/share/signalspanaren/facit-klipp/osakra-bilder/` (6 bilder, 6 klipp per bild,
   `index.json`). Öppnas inte automatiskt. Efter beslut:
