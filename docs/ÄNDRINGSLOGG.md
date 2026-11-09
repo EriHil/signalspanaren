@@ -12,6 +12,7 @@
 - [ ] **Analysmotorn: stabilitet/träning.** Hitta fler sätt att träna analysmotorn – den fladdrar för mycket.
 - [ ] **ADS-B: luftrum och radioströmmar.** Undersök om ADS-B-vyn kan visa luftrumsområden/sektorer och kopplas till radioströmmar (t.ex. live-ATC) på webben, så att man kan följa ett flygplan och klicka på en kanal/frekvens för att öppna och lyssna på ljudströmmen.
 - [ ] **AIS/fartyg: sjöområden och marin VHF-strömmar.** Undersök om fartygsvyn (AIS) kan visa sjöområden/sektorer (t.ex. VTS) och kopplas till marin VHF-radioströmmar på webben, så att man kan följa ett fartyg och klicka på en kanal/frekvens för att öppna och lyssna på ljudströmmen.
+- [ ] **ADS-B: Flightradar-data.** Integrera Flightradar-data i ADS-B-vyn, med möjlighet att välja och sortera på signaltyp/datakälla.
 - [ ] **Granska de 31 osäkra facitklippen.** Bildserie genererad 2026-11-08 i
   `~/.local/share/signalspanaren/facit-klipp/osakra-bilder/` (6 bilder, 6 klipp per bild,
   `index.json`). Öppnas inte automatiskt. Efter beslut:
