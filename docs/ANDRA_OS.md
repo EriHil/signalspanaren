@@ -306,6 +306,47 @@ De här tjänsterna sänder **färdigt ljud**, inte IQ. Det blir därför ingen 
 
 **Svensk lag (gäller båda):** att lyssna är tillåtet. Enligt lagen om elektronisk kommunikation får innehåll i radiotrafik som inte är avsedd för en själv inte spridas eller utnyttjas. Programmet bör därför inte spela in eller dela ljudet från dessa tjänster automatiskt.
 
+> **Två fynd som påverkar programmet redan nu (kontrollerat 2026-11-09):**
+> - **adsb.lol kommer att kräva API-nyckel.** Flygradarns internetkälla (`adsb.py`, rad 467–493) använder adsb.lols öppna API. Enligt adsb.lols dokumentation kommer API:t att kräva en nyckel som man får genom att skicka data till adsb.lol, och gränserna för antal anrop ändras efter belastning. Internetkällan kan alltså sluta fungera för den som inte skickar data. Idé 27 (skicka ADS-B till adsb.lol) löser det för den som har en dongel.
+> - **Flathub förbjuder AI-skrivna program sedan maj 2026.** Enligt GamingOnLinux gäller förbudet program med kod, dokumentation eller annat innehåll som är AI-genererat eller AI-assisterat, och även själva ansökan. Undantag kan ges för mogna och välskötta projekt. Signalspanaren är skriven med Claude Code (README), så idé 32 (Flathub) blir troligen nekad. Flatpak-paketet kan fortfarande byggas och installeras lokalt som idag. Kontrollera den officiella texten i Flathubs dokumentation innan en ansökan görs.
+
+### Fler mottagare på nätet
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 20 | SpyServer-nätet (Airspy) | Publika SpyServer-mottagare världen över, många med Airspy på HF och VHF. Ger **IQ**, inte bara ljud, och täcker VHF/UHF, vilket KiwiSDR inte gör. **Villkor:** SpyServer är stängd källkod. Protokollet är inte helt dokumenterat och vissa funktioner är förbehållna SDR#. Katalogen över servrar visas bara i SDR# och har ingen publicerad specifikation. Öppna klienter finns: SDR++ och `spyserver_client` (miweber67). **Väg framåt:** utgå från SDR++:s öppna klientkod (kontrollera licensen). Bakåtkompilera inte katalogen (se reglerna i avsnitt 7). Fråga Airspy om katalogen får användas. Alternativet **SDRx.io** samlar publika rtl_tcp- och SpyServer-stationer; rtl_tcp stöds redan i programmet. | [ ] |
+| 21 | SatNOGS (satelliter) | Ett öppet nätverk av markstationer. **Villkor (kontrollerat):** API:t är öppet för alla och all data är CC BY-SA. Programvaran är AGPL-3.0/GPL-3.0+. Varje observation har vattenfall (PNG) och ljud (OGG), ibland på archive.org. Rå IQ laddas normalt inte upp. **Nytta:** riktiga signaler med känd satellit och modulation, alltså facit-klipp för steg 1 i planen, och data får läggas i repot med upphovet angivet. | [ ] |
+
+### Förkunskap till analysen (bevismotorn)
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 22 | EiBi och HFCC (rundradiotablåer) | Tablåer för rundradio på kortvåg: station, frekvens, tid, språk och sändarplats. Analysen vet då att det på 7 265 kHz klockan 18 UTC ska vara AM från en viss station. Passar idé 3. **Villkor:** EiBi beskrivs som gratis och används av många program, men ingen licenstext har hittats. HFCC:s villkor har inte hittats. Kontrollera eibispace.de och hfcc.org. Ett säkert sätt är att låta användaren ladda ner filen själv. | [ ] |
+| 23 | Reverse Beacon Network, PSK Reporter, WSPRnet | Rapporter i realtid om var CW, FT8 och WSPR hörs just nu. De bekräftar analysens gissning med verkliga observationer. **Villkor:** PSK Reporter har en utvecklarsida som förbehåller sig rätten att blockera eller begränsa den som belastar tjänsten, kräver komprimering och avråder från att hämta samma data ofta. Rapporter till PSK Reporter får skickas högst var femte minut. RBN har inga hittade villkor; telnet-flödet är det loggprogram använder, med en anslutning och backoff. WSPRnet är inte kontrollerat. | [ ] |
+| 24 | Priyom och UDXF (sifferstationer, utility) | Tablåer och listor för sifferstationer och utility-trafik på HF: militär, diplomati, väder. Stöd till `signaldb.py`. **Villkor:** inga hittade. Priyom har en tablå över sifferstationer på priyom.org och en community på IRC (Libera, #priyom) och Discord. Fråga innan data förs in. | [ ] |
+| 25 | Rymdväder och utbredning | NOAA SWPC (Kp-index, solflöde) och VOACAP (utbredningsprognos). Förklarar varför ett band är dött och ger HF-analysen en förväntan. **Villkor (kontrollerat):** NOAA-data är allmän egendom och får användas fritt; NOAA vill att källan anges och att man inte antyder att NOAA står bakom programmet. Vissa värden är preliminära och ska märkas så. VOACAP för Linux (voacapl) har licensen "special" och CC0 enligt Debian. Läs upphovsrättsfilen innan något tas in. | [ ] |
+
+### Jämföra och dela våra avkodningar
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 26 | airframes.io (ACARS, VDL2, HFDL) | Samlar meddelanden från många mottagare. Vi kan kontrollera att vår ACARS-avkodare ger samma meddelanden som nätverket (svaghet 1), och skicka våra egna. **Villkor:** allmänna användarvillkor finns; materiella ändringar meddelas 30 dagar i förväg. Inga särskilda API-villkor hittades. Data skickas till feed.airframes.io: ACARS UDP 5550, VDL2 UDP 5552 / TCP 5553, HFDL 5556. Det finns en API-klient (airframes-client). | [ ] |
+| 27 | Skicka ADS-B till adsb.lol eller airplanes.live | Signalspanaren skickar avkodade flygplan till nätverket. **Villkor (kontrollerat):** adsb.lols historiska data, re-api och BEAST/MLAT-utgångar är ODbL 1.0. Det som delas med andra nätverk licensieras som CC0. Den som skickar data får en API-nyckel, och det löser problemet i rutan ovan. airplanes.live har inga officiella villkor hittade; en tredjepartssida anger 1 anrop/s gratis. | [ ] |
+| 28 | Skicka AIS till AISHub | **Villkor (kontrollerat):** kräver minst ett eget rått AIS-flöde i NMEA från en mottagare man själv driver. Syntetiska, skrapade eller lånade data godtas inte, så simulatorn får aldrig skicka. Man fyller i ett formulär och får IP och UDP-port. Medlemmar med bra station får en API-nyckel till all data (1 anrop per minut). Data får användas även kommersiellt med texten "Data: AISHub contributors" och en länk. Rådata får inte lämnas vidare, och data får inte användas för navigering. | [ ] |
+| 29 | APRS-IS som iGate | Skicka mottagna APRS-paket till APRS-IS, som aprs.fi visar. **Villkor (kontrollerat):** att läsa från APRS-IS går med lösenkoden -1. För att skicka krävs en giltig lösenkod, som bara ges till licensierade radioamatörer. Det är omstritt om en iGate som bara tar emot kräver licens, men praxis är licens. Programmet bör kräva anropssignal och lösenkod och aldrig skicka från simulatorn eller en IQ-fil. | [ ] |
+| 30 | OpenSky Network och aprs.fi som facit | Kända flygplan och APRS-positioner att jämföra våra avkodare mot. **Villkor (kontrollerat):** OpenSky ger licens bara för icke-vinstdrivande forskning, utbildning, intern testning eller myndighetsbruk. Akademisk åtkomst granskas manuellt, och OpenSky ska citeras i publikationer. aprs.fi kräver eget konto och nyckel **per användare**, att aprs.fi anges som källa med synlig länk, och att svar cachas. | [ ] |
+
+### Programmet självt
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 31 | Raspberry Pi utan skärm | Kör på en Pi vid antennen med webbgränssnittet, som en egen fjärrmottagare. DragonOS har en Pi-version. Kräver att webbgränssnittet får inloggning (idé 14). | [ ] |
+| 32 | Publicera på Flathub | Ett klick att installera på alla distributioner. **Troligen nekad** på grund av Flathubs AI-förbud (se rutan ovan). Alternativ: ett eget Flatpak-förråd på GitHub Pages eller releaser på GitHub med en `.flatpak`-fil. | [ ] |
+| 33 | Vara server själv | Dela din dongel som rtl_tcp (enkelt och öppet) så att SDR++ eller andra program på en annan dator kan använda den. Att vara SpyServer kräver Airspys stängda protokoll; använd hellre rtl_tcp eller det öppna SDR-Server. | [ ] |
+| 34 | Engelsk översättning | Med gettext är svenska fortfarande standard men användarbasen blir mycket större. | [ ] |
+| 35 | Plugin-system för avkodare | Som SigDigger 0.3: andra kan skriva avkodare utan att ändra huvudkoden. Hör ihop med avsnitt 5, punkt 8 (externa avkodare). | [ ] |
+| 36 | Samlat avsnitt om lagar och regler | Vad som får tas emot, avkodas, sparas och spridas enligt svensk lag och PTS. Idag spritt i filen. Kan bli en egen sida i manualen. | [ ] |
+
 ## 9. Där Signalspanaren redan är bäst
 
 - Ett program där allt hänger ihop: vattenfall, skanner, logg, analys, avkodning och kartor delar samma data.
@@ -329,6 +370,18 @@ De här tjänsterna sänder **färdigt ljud**, inte IQ. Det blir därför ingen 
 - gr-inspector: <https://github.com/gnuradio/gr-inspector>, FISSURE: <https://github.com/ainfosec/FISSURE>, <https://fissure.readthedocs.io/>
 - Avsnitt 7: licens och datum lästa ur projektens källkod (git, 2026-11-09).
 - LiveATC: <https://liveatc.net/legal>, <https://liveatc.net/faq>, <https://forums.liveatc.net/listener-forum/permission-to-use-liveatc-audio-streams>
+- SpyServer: <https://www.rtl-sdr.com/sdr-update-spyserver-network-browser-now-available/>, <https://github.com/projecthorus/radiosonde_auto_rx/issues/628>, <https://relatedrepos.com/gh/miweber67/spyserver_client>, <https://www.rtl-sdr.com/sdrx-io-a-public-server-network-for-rtl_tcp-and-or-spyserver-stations/>
+- SatNOGS: <https://satnogs-network.readthedocs.io/en/latest/api.html>, <https://www.libre.space/projects/satnogs/>, <https://wiki.satnogs.org/Observations>
+- EiBi/HFCC: <https://www.rtl-sdr.com/tag/eibi/>, <https://pypi.org/project/swtools/1.1.0>
+- PSK Reporter: <https://pskreporter.info/pskdev.html>; RBN: <https://github.com/the-chrislaw/hamclock-pro/issues/399>
+- Priyom: <https://priyom.org/>
+- NOAA SWPC: <https://www.spaceweather.gov/content/data-access>, <https://registry.opendata.aws/noaa-space-weather>; VOACAP: <https://en.wikipedia.org/wiki/VOACAP>, <https://metadata.ftp-master.debian.org/changelogs/main/v/voacapl/stable_copyright>
+- airframes.io: <https://alpha.app.airframes.io/terms>, <https://docs.airframes.io/docs/backend/aggregator>, <https://github-redirect.dependabot.com/airframesio/airframes-client>
+- adsb.lol: <https://www.adsb.lol/docs/open-data/historical/>, <https://www.adsb.lol/docs/feeders-only/re-api/>, <https://github.com/adsblol/api>; airplanes.live: <https://flyitalyadsb.com/en/dati/confronto/>
+- AISHub: <https://www.aishub.net/join-us>, <https://www.aishub.net/>
+- APRS-IS: <https://www.aprs-is.net/Connecting.aspx>; aprs.fi API: <https://aprs.fi/page/api>
+- OpenSky: <https://openskynetwork.github.io/opensky-api>
+- Flathub: <https://docs.flathub.org/docs/for-app-authors/requirements>, <https://www.gamingonlinux.com/2026/05/flathub-moves-to-ban-nearly-all-apps-and-submissions-made-with-generative-ai/>
 - OpenMHz och trunk-recorder: <https://github.com/robotastic/trunk-recorder/>, <https://raw.githubusercontent.com/TrunkRecorder/trunk-recorder/master/docs/OpenMHz.md>, <https://github.com/aSmig/trunk-server>, <https://apps.apple.com/us/app/6466666994>
 - Broadcastify: <https://support.broadcastify.com/hc/en-us/articles/204740425-Live-Audio-Feed-Catalog-API>, <https://support.broadcastify.com/hc/en-us/articles/50488286518427-Broadcastify-Calls-Client-API>, <https://www.broadcastify.com/calls/dev/>, <https://www.broadcastify.com/>, <https://forums.radioreference.com/threads/other-apps-taking-and-reusing-broadcastify-streams.447737>
 
