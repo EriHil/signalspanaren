@@ -351,6 +351,12 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0, lutning=False):
             and 200.0 <= r[1] < 0.4 * rs[1] and rs[0] - rs[1] / 2 <= r[0] <= rs[0] + rs[1] / 2:
         # (under 200 Hz: en egen smal signal – CW, bärvåg – bredvid eller ovanpå ett band, inte en bit av det)
         r = rs[:3]
+    # bred FSK (personsökare, ±3–5 kHz): en svag signal mäts som bara den ena tonen, långt från klicket.
+    # Finns en spegelton på andra sidan och turas de om, är det ett FSK-par
+    if r is not None and survey_bw >= 10000.0 and abs(r[0]) >= 1500.0 and r[1] < 1.5 * abs(r[0]):
+        par = _fsk_par(z, fs, survey_bw, max_shift=min(12000.0, survey_bw), vaxling=True)
+        if par is not None and abs(par[1] - 150.0 - 2 * abs(r[0])) < 0.3 * 2 * abs(r[0]):
+            return par
     # tätt band: mätningen har slagit ihop klicket med grannarna till ett brett band, men vid klicket finns
     # ett äkta FSK-par (tonerna turas om) – då gäller paret
     if r is not None and r[1] >= 400.0:

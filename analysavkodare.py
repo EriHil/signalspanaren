@@ -420,7 +420,10 @@ class PocsagAvkodare(A.TvatonsBas, FiAvkodare):
     def passar(self, feat):
         b, s = feat.get("baud"), feat.get("shift")
         if feat.get("fam") not in ("FSK2", "MSK"):
-            return False
+            # svag bred FSK klassas ofta som SSB/LIN: på VHF/UHF (där personsökare finns, inte AM-
+            # rundradio) räcker en uppmätt bredd som ett POCSAG-par – synkordet och BCH avgör sedan
+            bw = feat.get("bredd_uppmatt") or 0
+            return feat.get("fam") != "BRUS" and (feat.get("f_abs") or 0) >= 25e6 and 5000 <= bw <= 14000
         # bred FSK (2–12 kHz shift) räcker: takten avgörs av synkordet (analysens takt är osäker)
         return (not s or 2000 <= s <= 12000) and (not b or any(abs(b - r) / r < 0.1 for r in self.RATES)
                                                     or (s and s >= 2000))
