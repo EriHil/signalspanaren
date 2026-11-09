@@ -897,6 +897,15 @@ class SimSource(BaseSource):
             self.low += [(3.881e6, fav, 0.05), (6.825e6, fav, 0.03)]
         except Exception:
             log.exception("Simulatorns CW-signaler kunde inte skapas")
+        # RTTY från RTTY-generatorn: DWD-lik väderstation (50 Bd/450 Hz, selektiv fädning) på
+        # 10,1008 och 4,583 MHz, amatör-RTTY på 20 m (QSO 14,083, contest 14,0865 MHz)
+        try:
+            dwd = _sim_rtty(48000, "dwd")
+            self.low += [(10.1008e6, dwd, 0.05), (4.583e6, dwd, 0.03),
+                         (14.083e6, _sim_rtty(48000, "amator"), 0.04),
+                         (14.0865e6, _sim_rtty(48000, "contest"), 0.06)]
+        except Exception:
+            log.exception("Simulatorns RTTY-signaler kunde inte skapas")
         V = analysavkodare
         silence = np.zeros(48000 * 3, np.complex64)
         self.low += [
@@ -1037,6 +1046,23 @@ def _sim_fav22(fs):
                    namn="FAV22-lik", start_s=1.0)
     sek = 1.0 + G.sandningslangd(st, st.text) + 2.5
     z, _ = G.generera(G.Band([st], snr_db=90), fs, sek, seed=2222)
+    z /= float(np.percentile(np.abs(z), 99)) + 1e-12
+    return z.astype(np.complex64)
+
+
+def _sim_rtty(fs, typ):
+    """RTTY-station för simulatorn (komplext basband kring 0 Hz). Slingan är sändningen + paus."""
+    import rttygenerator as R
+    rng = np.random.default_rng({"dwd": 31, "amator": 32, "contest": 33}[typ])
+    if typ == "dwd":
+        st = R.Station(R.dwd(rng), baud=50, shift=450, fd=1.5, rice=2.0, start_s=1.0)
+    elif typ == "amator":
+        st = R.Station(R.amator(rng), qsb=0.4, start_s=1.0)
+    else:
+        st = R.Station(R.contest(rng), start_s=1.0)
+    tb = 1.0 / st.baud
+    sek = 1.0 + sum(L for _, L, _ in R.baudot(st.text, st.stoppbitar, baud=st.baud)) * tb + 3.0
+    z, _ = R.generera(R.Band([st], snr_db=90), fs, sek, seed=7)
     z /= float(np.percentile(np.abs(z), 99)) + 1e-12
     return z.astype(np.complex64)
 

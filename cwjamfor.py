@@ -186,14 +186,42 @@ class Fldigi:
                 return True
         return False
 
-    def avkoda(self, ljud):
+    RTTY_BAUD = {45.0: 0, 45.45: 1, 50.0: 2, 56.0: 3, 75.0: 4, 100.0: 5}
+    RTTY_SHIFT = {170.0: 3, 200.0: 5, 425.0: 8, 850.0: 9}
+
+    def rtty(self, baud, shift, stopp=1.5):
+        """Startar om fldigi med RTTY-inställningarna (de går inte att sätta via XML-RPC)."""
+        import re
+        konf = os.path.join(CACHE, "fldigi", "fldigi_def.xml")
+        self.starta()                                     # skapar inställningsfilen om den saknas
+        txt = open(konf, encoding="utf-8").read()
+        sh = self.RTTY_SHIFT.get(float(shift), -1)
+        varden = {"RTTYBAUD": self.RTTY_BAUD.get(float(baud), 1), "RTTYSHIFT": sh,
+                  "RTTYCUSTOMSHIFT": int(shift), "RTTYBITS": 0, "RTTYSTOP": {1.0: 0, 1.5: 1, 2.0: 2}.get(stopp, 1)}
+        for k, v in varden.items():
+            if f"<{k}>" in txt:
+                txt = re.sub(f"<{k}>[^<]*</{k}>", f"<{k}>{v}</{k}>", txt)
+            else:
+                txt = txt.replace("</FLDIGI_DEFS>", f"<{k}>{v}</{k}>\n</FLDIGI_DEFS>")
+        try:
+            self.s.fldigi.terminate(0)
+        except Exception:
+            pass
+        subprocess.run(["pkill", "-f", "fldigi --config-dir"], check=False)
+        time.sleep(2)
+        open(konf, "w", encoding="utf-8").write(txt)
+        return self.starta()
+
+    def avkoda(self, ljud, modem="CW", omvand=False):
         """Spelar ljudet (TON Hz) för fldigi i realtid och returnerar texten."""
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
             p = fh.name
         skriv_wav(p, np.concatenate((np.zeros(LJUD_FS // 2, np.float32), ljud, np.zeros(LJUD_FS, np.float32))))
         try:
-            self.s.modem.set_by_name("CW")
+            self.s.modem.set_by_name(modem)
             self.s.modem.set_carrier(int(TON))
+            if modem != "CW":
+                self.s.main.set_reverse(bool(omvand))
             self.s.main.set_afc(True)
             self.s.main.set_squelch(False)      # brusspärren skulle tysta svaga signaler
             self.s.text.clear_rx()

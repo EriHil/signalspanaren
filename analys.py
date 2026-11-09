@@ -1390,9 +1390,10 @@ class RttyAvkodare(Avkodare):
     SHIFTAR = (170.0, 200.0, 425.0, 450.0, 850.0)
     RR = 2400.0        # Hz, arbetstakt
     HIST_S = 4.0       # s historik
-    ATC_S = 0.6        # s, fönster för tonernas nivå
+    ATC_S = 0.35       # s, fönster för tonernas nivå (tränat: kortare klarar selektiv fädning)
     MIN_OK = 0.45      # poäng (andel godkända ramar × bitarnas tydlighet) som krävs för att skriva ut
     MIN_SNR = 3.0      # dB, tonparet måste synas över bruset
+    NB = 4.0           # störningsspärr: nollar sampel starkare än NB × normal nivå
 
     def __init__(self):
         self.reset()
@@ -1403,6 +1404,8 @@ class RttyAvkodare(Avkodare):
         self.base = 0                     # absolut index för y[0]
         self.c = None                     # tonparets mitt (Hz)
         self.snr = 0.0                    # tonparets nivå över bruset (dB)
+        self.nb = None                    # störningsspärrens referensnivå
+        self.shpoang = {}                 # shift: (poäng i dB, mitt, energi)
         self.sh = None                    # shift (Hz)
         self.fr = {(b, p): self._mk() for b in self.STD for p in (0, 1)}
         self.best = None
@@ -1441,18 +1444,22 @@ class RttyAvkodare(Avkodare):
         o = np.argsort(f)
         f, P = f[o], _smooth(P[o], max(1, int(round(8.0 / (RR / nf)))))
         kand = [s for s in self.SHIFTAR if not sh or abs(s - sh) / s < 0.15] or [sh]
-        best = None
+        mitt = c0 if (feat and feat.get("f_mid") is not None) else self.c      # sök kring analysens mitt
         for s in kand:
-            cc = np.arange(self.c - 60, self.c + 60.1, 1.0)
-            e = np.interp(cc - s / 2, f, P) + np.interp(cc + s / 2, f, P)
+            cc = np.arange(mitt - 60, mitt + 60.1, 1.0)
+            # båda tonerna måste finnas (geometriskt medel): en stark granne på ena sidan räcker inte
+            e = 2 * np.sqrt(np.interp(cc - s / 2, f, P) * np.interp(cc + s / 2, f, P))
             k = int(np.argmax(e))
-            if best is None or e[k] > best[0]:
-                best = (float(e[k]), float(cc[k]), float(s))
-        e, c, s = best
+            # varje shift samlar poäng över tiden, så valet inte hoppar mellan analysstegen
+            p0 = self.shpoang.get(s)
+            v = 10 * math.log10(float(e[k]) / (float(np.median(P)) + 1e-30) + 1e-12)
+            self.shpoang[s] = (v if p0 is None else 0.8 * p0[0] + 0.2 * v, float(cc[k]), float(e[k]))
+        s = max(kand, key=lambda q: self.shpoang[q][0])
+        _, c, e = self.shpoang[s]
         self.c = c if self.sh is None else 0.7 * self.c + 0.3 * c
         self.sh = s
         # finns signalen kvar? tonparets energi mot bruset vid sidan om, de senaste 0,6 s
-        n2 = 1 << int(math.log2(max(64, int(RR * 0.6))))
+        n2 = 1 << int(math.log2(max(64, min(len(self.y), int(RR * 0.6)))))
         P2 = np.abs(np.fft.fft(self.y[-n2:] * np.hanning(n2))) ** 2
         f2 = np.fft.fftfreq(n2, 1 / RR)
         o2 = np.argsort(f2)
@@ -1489,7 +1496,14 @@ class RttyAvkodare(Avkodare):
         self.acc = x[n * k:]
         if n == 0:
             return ""
-        self.y = np.concatenate((self.y, x[:n * k].reshape(n, k).mean(axis=1)))
+        ny = x[:n * k].reshape(n, k).mean(axis=1)
+        # störningsspärr: RTTY har jämn amplitud, så korta pulser långt över den normala nivån
+        # (åskknaster, tändstörningar) nollas innan tonfiltren
+        a = np.abs(ny)
+        med = float(np.median(a)) if len(a) else 0.0
+        self.nb = med if self.nb is None else 0.9 * self.nb + 0.1 * med
+        ny = np.where(a > self.NB * self.nb, 0, ny).astype(np.complex64)
+        self.y = np.concatenate((self.y, ny))
         self._toner(feat)
         if self.sh is None or len(self.y) < self.RR * 0.5:
             return ""
