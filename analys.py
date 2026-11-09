@@ -218,6 +218,27 @@ class ChannelTap:
 # ════════════════════════════════════════════════════════════════════
 # Parametrar och klassning
 # ════════════════════════════════════════════════════════════════════
+def _knasterspärr(z, k):
+    """Nollar korta pulser (åskknaster, tändstörningar) som ligger långt över signalens normala nivå,
+    så att mätningen av takt och shift inte förstörs. Bara pulser kortare än ~5 ms: talets toppar i
+    SSB/AM är längre och ligger sällan k gånger över medianen."""
+    if not k or len(z) < 64:
+        return z
+    a = np.abs(z)
+    med = float(np.median(a)) + 1e-12
+    hog = a > k * med
+    if not hog.any() or hog.mean() > 0.02:          # många höga sampel: en stark signal, inte knaster
+        return z
+    # fyll i (interpolera) i stället för att nolla: nollor ser ut som på/av-nyckling för klassningen
+    hog = np.convolve(hog, np.ones(5), mode="same") > 0        # ta med pulsens flanker
+    i = np.arange(len(z))
+    ok = ~hog
+    if ok.sum() < 2:
+        return z
+    y = np.interp(i, i[ok], z.real[ok]) + 1j * np.interp(i, i[ok], z.imag[ok])
+    return y.astype(z.dtype)
+
+
 def _pow2(n):
     return 1 << int(round(math.log2(max(2, n))))
 
@@ -2201,6 +2222,7 @@ class Analyzer:
     LOCK_SWITCH_STEPS = 6      # en annan kandidat måste ligga högst så länge för att ta över
     LOCK_HOLD = 2.5            # sekunder som låset hålls kvar när signalen tappas
     SYNK_HALL = 30.0           # sekunder en avkodare med egen synk matas utan att klassningen passar
+    KNASTER = 8.0              # mätningen: sampel över KNASTER × normal nivå (korta pulser) nollas
 
     def __init__(self, sr, user_db=None):
         self.tap = ChannelTap(sr)
@@ -2394,7 +2416,7 @@ class Analyzer:
         snap = self.tap.snapshot(2.0)            # 2 s: stadigare brusgolv och sidband (tal varierar)
         if snap is None or len(snap[0]) < fs * 1.8:
             return True
-        z = snap[0]
+        z = _knasterspärr(snap[0], self.KNASTER)    # knaster flyttar annars mitten (t.ex. till en FSK-ton)
         ft["tries"] += 1
         lf = tgt < 500e3          # VLF/LF: brusgolvet lutar kraftigt (atmosfäriskt brus faller med frekvensen)
         r = fit_bandwidth(z, fs, ft["survey"], near_hz=max(200.0, ft["guess"] * 0.5), lutning=lf)
@@ -2534,6 +2556,7 @@ class Analyzer:
         z, fs, tgt, bw, gen, total = snap
         if total == self._last_total or len(z) < fs * 0.25:
             return None
+        z = _knasterspärr(z, self.KNASTER)          # knaster förstör både bredden och mätningen
         if self._fit_step(z, fs, tgt):
             return None
         self._last_total = total
@@ -2582,8 +2605,9 @@ class Analyzer:
             except Exception:
                 pass
         for dd in self.dec:
-            if locked and dd not in locked and self.tvinga is None:
-                continue
+            if locked and dd not in locked and self.tvinga is None \
+                    and getattr(dd, "PRIORITET", 0) <= getattr(locked[0], "PRIORITET", 0):
+                continue                 # en avkodare med högre prioritet får ändå försöka hitta synk
             use = None
             if self.tvinga is not None:
                 if dd.namn != self.tvinga:
