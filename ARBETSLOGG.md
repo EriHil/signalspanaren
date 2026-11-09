@@ -305,3 +305,41 @@ analyskedjan (som i programmet), referensavkodare och åtgärder i tur och ordni
 ### Kvar att göra
 - Analysens klassning av svaga och störda signaler (NAVTEX i knaster, svag POCSAG).
 - ALE, DMR och väderfax är inte genomgångna med den här metoden.
+
+---
+
+## 2026-11-09 (forts.) – klassningen av svaga/störda signaler, ALE, DMR och väderfax
+
+### Analysens klassning
+- **Knaster**: en störningsspärr (`_knasterspärr`) interpolerar bort korta pulser före
+  bandbreddsmätningen och analysen. Först provades nollor, men de såg ut som på/av-nyckling.
+  Spärren måste ligga på bandbreddsmätningens egen ögonblicksbild.
+- **Låsning**: en låst avkodare stänger bara ute avkodare med samma eller lägre prioritet.
+  RTTY låste en NAVTEX-signal och stängde ute NAVTEX.
+- **Svag POCSAG**: spegeltonen letas upp på andra sidan klicket (upp till 12 kHz shift).
+  POCSAG startar på VHF/UHF när bredden är som för en personsökare.
+- **Tonraster** (`_mfsk_kam`): för ALE (8 toner, 250 Hz) och faxets startton (300 Hz).
+  Dessutom breda FSK-par med 700–900 Hz mellan tonerna.
+
+### Resultat (genom hela analyskedjan)
+
+| Avkodare | Före | Efter |
+|---|---|---|
+| NAVTEX (teckenfel) | 19,6 % | **8,7 %** (knaster 40 → 1,1 %) |
+| POCSAG (102 sidor) | 77 rätt | **93 rätt**, 1 falsk (multimon-ng 69) |
+| ALE (56 ord) | 36 % | **100 %**, 0 falska |
+| DMR (24 samtal) | 10 rätt | **17 rätt**, 0 falska |
+| Väderfax (likhet med bilden) | 0,11 | **0,88** |
+
+### Per avkodare
+- **ALE**: 8 tonfilter i stället för diskriminator. Avkodaren startar på kortvåg även när
+  klassningen inte blir MFSK, och tonrastret sätter rätt bredd.
+- **DMR**: ett kanalfilter på ±6 kHz före diskriminatorn hjälpte mot både grannkanal och
+  tändstörningar. Egna nivåer (k-means) och störningsspärr provades men gjorde det sämre.
+  dsdccx fungerade inte som referens här. Kvar: svag signal och fädning.
+- **Fax**: kanalfilter, en startton som kräver en spektrallinje i 0,7 s (kartan startade
+  annars nya bilder), fasning relativt bruset och start även vid OOK-klassning.
+
+### Mätverktyg
+`python3 analystest.py morse|rtty|navtex|psk|pocsag|ale|dmr|fax` plus generatorerna
+`cw-, rtty-, psk-, pocsag-, ale-, dmr- och faxgenerator.py`.
