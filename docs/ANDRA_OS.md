@@ -124,7 +124,70 @@ Förslagen följer projektets inriktning: passiv mottagning, svenska, ett samman
 
 **Inte att ta efter:** sändning, störsändning, GPS-förfalskning och IMSI-fångare från SigintOS. Det är olagligt utan tillstånd och strider mot projektets linje att krypterad och skyddad trafik inte ska läsas.
 
-## 6. Där Signalspanaren redan är bäst
+## 6. Plan: åtgärda svagheterna i analysen
+
+Planen gäller främst testerna, inte programmet. Steg 1–4 ändrar inget i programmet som användarna kör.
+
+### Svaghet 1: analysen och avkodarna testas mest mot sina egna signaler
+
+Självtestet och de syntetiska testerna i `analystest.py` använder signaler som vi själva har skapat (`make_rtty`, `make_acars_burst` med flera). De bygger på samma antaganden som avkodarna. Ett fel i hur vi har tolkat standarden syns därför inte i testet. Det är troligen därför ACARS och APRS aldrig har avkodat riktig trafik.
+
+**Åtgärd: lägg till riktiga inspelningar som facit.**
+
+1. **Spela in egna klipp.** Använd `analystest.py spela-in` och IQ-inspelningen i programmet. De viktigaste att få in:
+   - ACARS på 131,725 MHz, där det är trafik dagtid nära Arlanda och Bromma.
+   - APRS på 144,800 MHz.
+   - POCSAG.
+   - DMR.
+2. **Använd publika inspelningar.** Det finns färdiga IQ-filer med känd signaltyp, bland annat:
+   - sigidwiki, med ljud och ibland IQ per signal.
+   - GNU Radios och SigMF-projektets exempelfiler.
+   - Testfiler som följer med acarsdec, direwolf och multimon-ng.
+
+   Om filerna avkodas lika bra av oss som av deras verktyg vet vi att våra avkodare är rätt.
+3. **Gör klippen reproducerbara.** Idag ligger facit-klippen bara lokalt i `~/.local/share/signalspanaren/facit-klipp/`. Lägg en liten uppsättning korta klipp i repot, till exempel `test/klipp/` med några sekunder per klipp i cu8 eller cf32. Då kan vem som helst köra samma mätning.
+
+### Svaghet 2: facit är smalt och analysen tål dåligt med brus
+
+Ändringsloggen visar att analysen har rätt typ i 98 % av stegen på facit-klippen. Med 6 dB extra brus sjunker det till 73 %. Facit innehåller 27 signaler:
+
+- Många är OOK, AM och PSK.
+- FM och 4-FSK har bara ett klipp var.
+- MSK och OFDM har inga klipp i `facit.json`.
+- Nästan allt ligger på HF. Det finns inget från VHF eller UHF, där de flesta med RTL-SDR lyssnar.
+
+**Åtgärd:**
+
+1. **Bredda facit.** Sikta på minst 3–5 klipp per signalfamilj, från olika stationer och förhållanden. Lägg till VHF/UHF-signaler: NFM-tal, ACARS, AIS, APRS, POCSAG, DMR och PMR446.
+2. **Mät tålighet mot brus i varje körning.** Låt `analystest.py mat` köra varje klipp även med +3, +6 och +10 dB brus och med ett frekvensfel på några hundra Hz. Skriv ut en kurva över andelen rätt mot SNR. Då syns direkt om en ändring gör analysen skörare, vilket är det som hänt i fallen med MSK och nycklad bärvåg.
+3. **Lägg till "fällor" i facit.** Det är signaler som analysen tidigare har tagit fel på: VOLMET-tal som blev STANAG, RTTY som blev MSK, fädande AM som blev OOK. Varje rättat fel bör få ett klipp, så att felet inte kommer tillbaka.
+
+### Svaghet 3: inget skydd mot att det blir sämre
+
+Idag kör någon testet för hand.
+
+**Åtgärd: GitHub Actions** som kör `--sjalvtest` och `analystest.py mat` på klippen i repot vid varje push. Bygget ska stoppas om andelen rätt sjunker under en gräns, till exempel 95 % för rena klipp och 70 % med 6 dB brus. `--spara` och `--jamfor` finns redan, så det som behövs är en arbetsfil och en sparad referens.
+
+### Svaghet 4: när analysen är osäker finns inget verktyg att mäta själv med
+
+Analysen säger "Osäker – klassa själv", men användaren har inget sätt att mäta. Det är här inspectrum och Universal Radio Hacker i DragonOS är bättre.
+
+**Åtgärd, i liten skala:**
+
+- Markörer i signalanalysens lilla vattenfall som mäter tid och frekvens. Avståndet mellan markörerna ger symboltakt och shift.
+- Export av den råa bitströmmen till en fil, så att man kan granska den eller köra den i URH.
+
+### Ordning
+
+| Steg | Arbete | Effekt | Klart |
+|---|---|---|---|
+| 1. Riktiga klipp för ACARS, APRS, POCSAG och DMR | Lite kod, mest inspelning | Störst. Vi får veta om avkodarna fungerar på riktiga signaler. | [ ] |
+| 2. Brus- och frekvensfelstest i `analystest.py` | Liten kod, bara i testverktyget | Hög | [ ] |
+| 3. Klipp i repot och CI | Liten | Hög, varaktig | [ ] |
+| 4. Bredare facit (VHF, FM, 4-FSK, MSK, OFDM) | Mest inspelning | Hög | [ ] |
+| 5. Markörer och bitexport | Medelstor GUI-kod | Medel | [ ] |
+
+## 7. Där Signalspanaren redan är bäst
 
 - Ett program där allt hänger ihop: vattenfall, skanner, logg, analys, avkodning och kartor delar samma data.
 - Automatisk klassning med bevismotor, bandplan som förkunskap och signaldatabas. Det har ingen av de andra.
