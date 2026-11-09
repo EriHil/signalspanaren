@@ -20,7 +20,7 @@ import time
 from collections import Counter, deque
 
 import numpy as np
-from scipy.signal import firwin, upfirdn, find_peaks
+from scipy.signal import butter, firwin, sosfilt, upfirdn, find_peaks
 from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
 import signaldb
@@ -1094,6 +1094,7 @@ def analyze(z, fs, bw):
     if fam in ("AM", "SSB", "OOK"):
         k = max(1, int(len(sm) / 400))
         out["kurva"] = sm[-400 * k::k] / p95
+        out["kurva_s"] = len(out["kurva"]) / (fs / k)
     out["ms"] = (time.perf_counter() - t0) * 1000
     return out
 
@@ -1522,6 +1523,7 @@ MORSE = {".-": "A", "-...": "B", "-.-.": "C", "-..": "D", ".": "E", "..-.": "F",
 class CwAvkodare(Avkodare):
     namn = "Morse (CW)"
     RATE = 500.0     # Hz, upplösning för nyckelläget
+    CHANNEL_HZ = 120.0
     HIGH_PERCENTILE = 95
     ON_HYSTERESIS = 1.15
     OFF_HYSTERESIS = 0.85
@@ -1538,6 +1540,12 @@ class CwAvkodare(Avkodare):
 
     def reset(self):
         self.acc = np.zeros(0, np.float32)
+        self.noise_window = np.zeros(0, np.float32)
+        self._filter_sos = None
+        self._filter_zi = None
+        self._filter_fs = None
+        self._filter_offset = None
+        self._mix_phase = 0.0
         self.state = False
         self.run = 0
         self.ons = deque(maxlen=60)
@@ -1558,7 +1566,25 @@ class CwAvkodare(Avkodare):
     def feed(self, z, fs, feat):
         if len(z) == 0:
             return ""
-        a = np.abs(z).astype(np.float32)
+        has_center = "f_mid" in feat
+        offset = float(feat.get("f_mid", 0.0) or 0.0)
+        if has_center and fs > 2 * self.CHANNEL_HZ:
+            if (self._filter_sos is None or self._filter_fs != fs
+                    or abs(self._filter_offset - offset) > self.CHANNEL_HZ):
+                self._filter_sos = butter(4, min(self.CHANNEL_HZ, fs * 0.2), btype="lowpass",
+                                          fs=fs, output="sos")
+                self._filter_zi = np.zeros((len(self._filter_sos), 2), dtype=np.complex128)
+                self._filter_fs = fs
+                self._filter_offset = offset
+                self._mix_phase = 0.0
+            phase_step = 2 * np.pi * offset / fs
+            phase = self._mix_phase - phase_step * np.arange(len(z))
+            mixed = z * np.exp(1j * phase)
+            self._mix_phase = float((phase[-1] - phase_step) % (2 * np.pi))
+            isolated, self._filter_zi = sosfilt(self._filter_sos, mixed, zi=self._filter_zi)
+            a = np.abs(isolated).astype(np.float32)
+        else:
+            a = np.abs(z).astype(np.float32)
         k = max(1, int(fs / self.RATE))
         self.acc = np.concatenate((self.acc, a))
         n = len(self.acc) // k
@@ -1566,7 +1592,9 @@ class CwAvkodare(Avkodare):
             return ""
         e = self.acc[:n * k].reshape(n, k).mean(axis=1)
         self.acc = self.acc[n * k:]
-        hi, lo = float(np.percentile(e, self.HIGH_PERCENTILE)), float(np.percentile(e, 10))
+        self.noise_window = np.concatenate((self.noise_window, e))[-int(self.RATE * 1.5):]
+        hi = float(np.percentile(e, self.HIGH_PERCENTILE))
+        lo = float(np.percentile(self.noise_window, 10))
         dt = n / self.RATE
         if self.lvl_hi is None:
             self.lvl_hi, self.lvl_lo = hi, lo

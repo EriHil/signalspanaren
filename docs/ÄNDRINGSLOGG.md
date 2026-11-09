@@ -13,9 +13,9 @@
   - Gränser för antal användare och tid bestäms när det byggs.
   - Öppna frågor: om ändringarna granskas innan de införs, och vilken tjänst som tar emot klassningarna.
 - [ ] **Låst signaltyp: beslut.** Procenten visas som den var när typen låstes och uppdateras inte. Ska den i stället följa analysen? Inget beslut ännu.
-- [ ] **AI-chatten.** Verifiera analystexten (histogram och envelop) på en riktig signal. Testat bara med syntetisk data.
+- [x] **AI-chatten.** Verifierad på riktiga STANAG 4285- och Shannon VOLMET-inspelningar. Histogrammet anger nu basbandets frekvensavvikelse och normaliserade binvärden; envelopen anger tidsaxel och amplitudskala, eller att diagrammet saknas. AI-testet tolkade axlarna rätt efter förtydligandet.
 - [ ] **Claude-läget.** Testas med användarens egen API-nyckel och modell-ID. Modell-ID är tomt som standard.
-- [ ] **AI-sök efter tjänst eller signaltyp.** Be AI:n hitta till exempel VOLMET eller STANAG 4285. Sorteringen följer KiwiSDR-flaggornas typer. Frekvenserna verifieras med analysen, flaggorna är bara en lista. Träffen visas i vattenfallet och spelas upp. Om sökordet bara är en modulation, till exempel FSK, visas i stället de signaltyper som använder den.
+- [x] **AI-sök efter tjänst eller signaltyp.** AI:n rangordnar relevanta synliga Kiwi- och egna flaggor ur en begränsad kandidatlista genom att returnera validerade ID:n; namn, frekvens och läge visas från flaggdatan, inte AI:ns fria text. Resultaten grupperas efter Kiwi-typ. Flaggor är ledtrådar, inte facit. Val av träff ställer in och startar mottagningen så den kan verifieras i vattenfallet och analysen. En ren modulationssökning, till exempel FSK, visar signaltyper som använder modulationen. Handtest på aktiv Kiwi: 980 flaggor, 10 VOLMET-kandidater; RAF VOLMET-flaggan på 11,253 MHz gav en live SSB-mätning på 31 dB SNR, men sändningens tjänst kunde inte bekräftas. Sökningens format och kandidatval har enhetstester.
 - [ ] **AI-chatten: kortare svar.** Gratis-AI:n skriver långa svar och ibland påhittade detaljer. Prompten behöver skärpas.
 
 ## Ej släppt

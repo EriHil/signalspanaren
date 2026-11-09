@@ -264,6 +264,12 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   Knappar: bandbredd (Auto = signalens egen bredd), "Följ inställd" (analysera
   alltid demodulatorns kanal), "🎧 Lyssna" (ställer in demodulatorn på
   signalen med lämplig modulering), rensa, kopiera mätvärden och ⧉ eget fönster.
+  AI-chatten kan tolka aktuell analys. "AI-sök" letar bland synliga Kiwi- och egna flaggor
+  efter en tjänst eller signaltyp; flaggorna är kandidater, inte facit. Välj
+  "Ställ in och spela" för att ställa in och starta mottagningen, och kontrollera
+  sedan vågformen i vattenfallet och analysen. En ren modulationssökning, t.ex.
+  FSK, visar signaltyper som använder den. Sökord och flagguppgifter skickas
+  till vald AI-tjänst.
   Egna signaltyper: lägg en lista i ~/.config/signalspanaren/signaler.json, t.ex.
     [{"namn": "Min fyr", "kat": "egen", "mod": ["OOK"], "bw": 100,
       "f": [[3.5, 3.6]], "info": "Lokal fyr"}]
@@ -283,6 +289,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   python3 analystest.py cw       testar Morse-avkodningen med brusiga testsignaler
   python3 analystest.py cw --wav FIL.wav
                                  avkodar en inspelad CW-ljudfil för jämförelse
+  CW-avkodaren smalfiltrerar runt den valda signalens mittfrekvens för att minska
+  påverkan från frekvensseparerad QRM.
   python3 analystest.py samla    spelar in klippen i facit.json från KiwiSDR
   python3 analystest.py spela-in --frekvens 7.1 --fam SSB --bredd 1800-3200 --namn "SSB 40 m"
   Klippen sparas i ~/.local/share/signalspanaren/facit-klipp/.

@@ -5118,12 +5118,9 @@ def run_gui(args):
                 if hi > lo:
                     steg = np.linspace(lo, hi - 1, 64).astype(int)
                     txt += "\nSpektrum (dB, 64 punkter runt signalen): " + " ".join(f"{disp[i]:.0f}" for i in steg)
-            if r.get("hist") is not None:
-                c, hs = r["hist"]
-                txt += "\nFrekvensfördelning (Hz:antal): " + " ".join(f"{x:.0f}:{y:.0f}" for x, y in list(zip(c, hs))[::4])
-            if r.get("kurva") is not None:
-                kv = np.asarray(r["kurva"], float)
-                txt += "\nEnvelop (senaste): " + " ".join(f"{v:.2f}" for v in kv[::max(1, len(kv) // 40)][-40:])
+            extra = ai.analysdata(r)
+            if extra:
+                txt += "\n" + extra
             return txt
 
         def _open_chat(self):
@@ -5142,6 +5139,10 @@ def run_gui(args):
             ins.set_tooltip_text("Inställningar för AI")
             ins.connect("clicked", lambda *_: self._open_ai_settings())
             hb.pack_end(ins)
+            sok = Gtk.Button(label="AI-sök")
+            sok.set_tooltip_text("Sök synliga Kiwi- och egna flaggor efter tjänst eller signaltyp")
+            sok.connect("clicked", lambda *_: self._open_ai_sok())
+            hb.pack_start(sok)
             tv.add_top_bar(hb)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             box.set_margin_start(8)
@@ -5187,6 +5188,154 @@ def run_gui(args):
             self._chat_win = win
             self._chat_uppdatera_val()
             win.present()
+
+        def _open_ai_sok(self):
+            if not ai.las_config(self._ai_cfg_sokv())["aktiv"]:
+                self._open_ai_settings()
+                return
+            if getattr(self, "_ai_sok_win", None) is not None:
+                self._ai_sok_win.present()
+                return
+            win = Adw.Window(title="AI-sök – Signalspanaren", transient_for=self.win,
+                             default_width=620, default_height=620)
+            tv = Adw.ToolbarView()
+            tv.add_top_bar(Adw.HeaderBar())
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            for side in ("start", "end"):
+                getattr(box, f"set_margin_{side}")(10)
+            box.set_margin_top(8)
+            box.set_margin_bottom(8)
+            box.append(Gtk.Label(
+                label="Flaggor är kandidater, inte facit. Välj en träff för att ställa in mottagaren "
+                      "och kontrollera signalen i vattenfallet och analysen.",
+                xalign=0, wrap=True, css_classes=["dim-label"]))
+            box.append(Gtk.Label(
+                label="Sökord samt kandidatflaggornas namn, typ, läge, frekvens och noter skickas till vald AI-tjänst.",
+                xalign=0, wrap=True, css_classes=["dim-label"]))
+            rad = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self._ai_sok_in = Gtk.SearchEntry(hexpand=True, placeholder_text="Tjänst eller signaltyp, t.ex. VOLMET")
+            self._ai_sok_in.connect("activate", lambda *_: self._ai_sok())
+            rad.append(self._ai_sok_in)
+            self._ai_sok_btn = Gtk.Button(label="Sök")
+            self._ai_sok_btn.add_css_class("suggested-action")
+            self._ai_sok_btn.connect("clicked", lambda *_: self._ai_sok())
+            rad.append(self._ai_sok_btn)
+            box.append(rad)
+            self._ai_sok_status = Gtk.Label(xalign=0, wrap=True)
+            box.append(self._ai_sok_status)
+            self._ai_sok_lista = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            self._ai_sok_lista.add_css_class("boxed-list")
+            sw = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+            sw.set_child(self._ai_sok_lista)
+            box.append(sw)
+            tv.set_content(box)
+            win.set_content(tv)
+            win.connect("close-request", lambda *_: win.set_visible(False) or True)
+            self._ai_sok_win = win
+            win.present()
+            self._ai_sok_in.grab_focus()
+
+        def _ai_sok(self):
+            query = self._ai_sok_in.get_text().strip()
+            if not query:
+                self._ai_sok_status.set_text("Skriv en tjänst eller signaltyp att söka efter.")
+                return
+            self._ai_sok_btn.set_sensitive(False)
+            self._ai_sok_status.set_text("Söker bland tillgängliga flaggor …")
+            while child := self._ai_sok_lista.get_first_child():
+                self._ai_sok_lista.remove(child)
+            win = self._ai_sok_win
+            button = self._ai_sok_btn
+
+            def arbeta():
+                try:
+                    signaler = analys.signaldb.load(os.path.join(CONF_DIR, "signaler.json"))
+                    modulationer = ai.sok_modulation(query, signaler)
+                    if modulationer is not None:
+                        GLib.idle_add(self._ai_sok_klart, "typer", modulationer, None, win, button)
+                        return
+                    flaggor_nu = self.win.flaggor.synliga(0, 1_000_000_000)
+                    kandidater = ai.sok_flaggkandidater(
+                        query, flaggor_nu, signaler, flaggor.typ_for)
+                    if not kandidater:
+                        raise ValueError("Inga aktiva Kiwi-flaggor matchar sökordet eller dess signalkategori.")
+                    cfg = ai.las_config(self._ai_cfg_sokv())
+                    system, meddelanden = ai.sok_prompt(query, kandidater)
+                    text = ai.svar(cfg, meddelanden, system)
+                    resultat = ai.sok_tolka(text, kandidater)
+                    GLib.idle_add(self._ai_sok_klart, "flaggor", resultat, None, win, button)
+                except Exception as ex:
+                    GLib.idle_add(self._ai_sok_klart, None, None, str(ex), win, button)
+
+            threading.Thread(target=arbeta, name="AISok", daemon=True).start()
+
+        def _ai_sok_klart(self, typ, resultat, fel, win, button):
+            button.set_sensitive(True)
+            if fel:
+                self._ai_sok_status.set_text(f"Sökningen misslyckades: {fel}")
+                return False
+            if typ == "typer":
+                if not resultat:
+                    self._ai_sok_status.set_text("Inga signaltyper i databasen använder den modulationen.")
+                    return False
+                self._ai_sok_status.set_text(f"Signaltyper som använder modulationen ({len(resultat)}):")
+                for signal in resultat:
+                    text = f"{signal.get('namn', 'Okänd')} · {signal.get('kat', 'okänd')}"
+                    mod = ", ".join(signal.get("mod") or [])
+                    info = signal.get("info", "")
+                    row = Gtk.ListBoxRow()
+                    labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                    labels.set_margin_top(8)
+                    labels.set_margin_bottom(8)
+                    labels.set_margin_start(10)
+                    labels.set_margin_end(10)
+                    labels.append(Gtk.Label(label=text, xalign=0, wrap=True))
+                    labels.append(Gtk.Label(label=f"{mod}. {info}", xalign=0, wrap=True,
+                                            css_classes=["dim-label"]))
+                    row.set_child(labels)
+                    self._ai_sok_lista.append(row)
+                return False
+            if not resultat:
+                self._ai_sok_status.set_text("AI:n hittade ingen relevant flagga bland kandidaterna.")
+                return False
+            ordning = {namn: i for i, namn in enumerate(flaggor.TYPER)}
+            resultat = [x for _i, x in sorted(enumerate(resultat), key=lambda y: (
+                ordning.get(flaggor.typ_for(y[1]), len(ordning)), y[0]))]
+            self._ai_sok_status.set_text(
+                f"{len(resultat)} flaggkandidater, grupperade efter Kiwi-typ. "
+                "Analysen avgör om signalen stämmer.")
+            for fl in resultat:
+                row = Gtk.ListBoxRow()
+                rad = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                rad.set_margin_top(6)
+                rad.set_margin_bottom(6)
+                rad.set_margin_start(8)
+                rad.set_margin_end(8)
+                info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+                namn = fl.get("namn") or "Namnlös flagga"
+                typnamn = flaggor.typ_for(fl)
+                freq = float(fl.get("f", 0))
+                info.append(Gtk.Label(label=f"{namn} · {typnamn}", xalign=0, wrap=True))
+                sub = f"{freq / 1e6:.6f} MHz · {fl.get('lage') or 'okänt läge'}"
+                info.append(Gtk.Label(label=sub, xalign=0, wrap=True, css_classes=["dim-label"]))
+                knapp = Gtk.Button(label="Ställ in och spela", valign=Gtk.Align.CENTER)
+                knapp.connect("clicked", lambda *_args, flagga=fl: self._ai_sok_stall_in(flagga, win))
+                rad.append(info)
+                rad.append(knapp)
+                row.set_child(rad)
+                self._ai_sok_lista.append(row)
+            return False
+
+        def _ai_sok_stall_in(self, fl, win):
+            self.win.tune_flagga(fl)
+            self.win.present()
+            if self.win.an_win is not None:
+                self.win.an_win.present()
+            else:
+                self.win.bottom_nb.set_current_page(self.win.an_page)
+            if not self.win.engine.running:
+                self.win.btn_start.set_active(True)
+            win.set_visible(False)
 
         def _chat_uppdatera_val(self):
             """Fyller modellvalet i chatten från inställningarna och visar vald modell."""
@@ -8761,13 +8910,20 @@ def selftest(seconds=4.0):
     errors = []
     e.on_error = errors.append
     e.start(src)
-    t_end = time.time() + seconds
     modes_ok = []
-    for m in MODES:
-        e.mode = m
-        e.bw = DEFAULT_BW[m]
-        time.sleep(seconds / len(MODES))
-        modes_ok.append((m, e.level))
+    # SimSource.open() prepares several synthetic signals and can take a few
+    # seconds. Start the measurement only after the DSP thread has processed
+    # its first block, otherwise startup time is incorrectly counted as lost
+    # simulator throughput.
+    start_deadline = time.monotonic() + 15.0
+    while e.running and e.stats["blocks"] == 0 and time.monotonic() < start_deadline:
+        time.sleep(0.01)
+    if e.stats["blocks"]:
+        for m in MODES:
+            e.mode = m
+            e.bw = DEFAULT_BW[m]
+            time.sleep(seconds / len(MODES))
+            modes_ok.append((m, e.level))
     e.stop()
     changes, _ = e.detector.pop_changes()
     st = e.stats

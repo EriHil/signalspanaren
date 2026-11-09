@@ -3,8 +3,10 @@
 Valbart: Groq, Gemini och OpenRouter med egen API-nyckel. Alla val har en gratisnivå;
 modeller som kräver betalning finns inte med. Nycklarna sparas med filrättigheter 600 och loggas aldrig."""
 import json
+import math
 import os
 import re
+import unicodedata
 import urllib.error
 import urllib.request
 
@@ -44,6 +46,10 @@ INFO = {"gratis": "Ingen nyckel krävs. Ett svar åt gången, ungefär var 30–
                       "förbättra modellerna, så skicka inget känsligt. Analysdata skickas till OpenRouter."}
 SYSTEM = ("Du är en assistent i programmet Signalspanaren för radioanalys. Svara på svenska och var tydlig med "
           "vad som är mätt och vad som är en gissning. Klassa aldrig en signal som säker utan tydliga belägg. "
+          "Histogrammets frekvensvärden är momentan frekvensavvikelse i basbandet relativt den isolerade signalens "
+          "centrum efter nedblandning, inte stationens RF-frekvens. Histogramvärdena är antal per bin normaliserade "
+          "så att högsta bin är 1. Envelopens x-värden är sekunder från äldst till nyast och y-värdena är amplitud "
+          "normaliserad mot 95-percentilen. Om ett diagram saknas i underlaget får du inte hitta på dess värden eller axlar. "
           "När användaren och du är överens om vilken signal det är, avsluta svaret med en egen rad som börjar med FÖRSLAG= "
           "direkt följt av ett JSON-objekt på samma rad med nycklarna namn, typ och not. Skriv ingen FÖRSLAG-rad annars. "
           "Skriv aldrig att något har sparats. Det gör användaren med knappen.")
@@ -84,7 +90,7 @@ def forslag_ur(text):
 def sammanfattning(r, klartext=""):
     if not r:
         return "Ingen signal analyseras just nu."
-    rader = [f"Frekvens: {r.get('f_abs', 0) / 1e6:.6f} MHz",
+    rader = [f"Uppmätt signalfrekvens (RF): {r.get('f_abs', 0) / 1e6:.6f} MHz",
              f"Typ (mätt): {r.get('fam')} / {r.get('klass')}",
              f"Baud: {r.get('baud') or '–'}, shift: {r.get('shift') or '–'} Hz, "
              f"bandbredd: {r.get('occ_bw') or '–'} Hz",
@@ -92,9 +98,169 @@ def sammanfattning(r, klartext=""):
     k = r.get("kandidater") or []
     if k:
         rader.append("Kandidater: " + ", ".join(f"{e.get('namn')} {s:.0f} %" for s, e, _w in k[:4]))
+    if r.get("hist") is None:
+        rader.append("Histogram: saknas i den här analysen.")
+    if r.get("kurva") is None:
+        rader.append("Envelop: saknas i den här analysen.")
     if klartext:
         rader.append("Avkodad text (senaste):\n" + klartext[-500:])
     return "\n".join(rader)
+
+
+def analysdata(r):
+    """Beskriver histogram och envelop med axlar så AI:n inte behöver gissa enheterna."""
+    def urval(n, max_punkter):
+        if n <= max_punkter:
+            return range(n)
+        return [round(i * (n - 1) / (max_punkter - 1)) for i in range(max_punkter)]
+
+    rader = []
+    hist = r.get("hist")
+    if hist is not None:
+        centers, counts = hist
+        top = max((float(v) for v in counts), default=0.0)
+        punkter = []
+        for i in urval(min(len(centers), len(counts)), 32):
+            x, y = float(centers[i]), float(counts[i])
+            if math.isfinite(x) and math.isfinite(y):
+                punkter.append(f"{x:.0f}:{y / top:.2f}" if top > 0 else f"{x:.0f}:0.00")
+        rader.append("Histogram: momentan frekvensavvikelse i basbandet efter nedblandning, relativt "
+                     "den isolerade signalens centrum (Hz:antal per bin normaliserat till max 1, "
+                     f"{len(punkter)} punkter): " + " ".join(punkter))
+    curve = r.get("kurva")
+    if curve is not None:
+        values = [float(v) for v in curve]
+        duration = r.get("kurva_s")
+        if duration is None and r.get("fs") and r.get("n"):
+            duration = float(r["n"]) / float(r["fs"])
+        punkter = []
+        for i in urval(len(values), 40):
+            v = values[i]
+            if math.isfinite(v):
+                t = i * float(duration) / max(1, len(values) - 1) if duration else None
+                punkter.append(f"{t:.2f}:{v:.2f}" if t is not None else f"{v:.2f}")
+        tid = f"{float(duration):.2f} s" if duration else "okänd tidslängd"
+        rader.append("Envelop (tid i sekunder från äldst till nyast:amplitud normaliserad mot 95-percentilen, "
+                     f"{tid}, {len(punkter)} punkter): " + " ".join(punkter))
+    return "\n".join(rader)
+
+
+_MODULATIONS = {
+    "fsk": {"FSK2", "FSK4", "MFSK", "MSK"},
+    "fsk2": {"FSK2"},
+    "fsk4": {"FSK4"},
+    "mfsk": {"MFSK"},
+    "msk": {"MSK"},
+    "psk": {"BPSK", "QPSK", "PSK8", "LIN"},
+    "bpsk": {"BPSK"},
+    "qpsk": {"QPSK"},
+    "psk8": {"PSK8"},
+    "ofdm": {"OFDM"},
+    "cw": {"OOK"},
+    "morse": {"OOK"},
+    "ook": {"OOK"},
+    "am": {"AM"},
+    "fm": {"FM"},
+    "nfm": {"FM"},
+    "wfm": {"FM"},
+    "ssb": {"SSB"},
+    "usb": {"SSB"},
+    "lsb": {"SSB"},
+}
+_KIWI_TYPER_FOR_KATEGORI = {
+    "militär": {"Militär"},
+    "myndighet": {"Militär"},
+    "flyg": {"Flyg", "HFDL"},
+    "sjöfart": {"Sjöfart"},
+    "navigation": {"Fyr/bake", "Sjöfart"},
+    "kommersiell": {"Data", "Fax/väder"},
+    "amatör": {"Amatör"},
+    "rundradio": {"Rundradio"},
+}
+
+
+def sok_modulation(query, signaler):
+    """Returnerar signaltyper för en ren modulationssökning, annars None."""
+    key = re.sub(r"[^a-z0-9]", "", str(query).casefold())
+    familjer = _MODULATIONS.get(key)
+    if familjer is None:
+        return None
+    return [s for s in signaler if familjer.intersection(s.get("mod") or [])]
+
+
+def sok_flaggkandidater(query, flaggor, signaler, typ_for, limit=120):
+    """Avgränsar AI-sökningen till flaggor som matchar sökordet eller dess signalkategori."""
+    def norm(text):
+        text = unicodedata.normalize("NFKD", str(text).casefold())
+        return "".join(c for c in text if not unicodedata.combining(c))
+
+    q = norm(query)
+    termer = re.findall(r"[a-z0-9]+", q)
+    if not termer:
+        return []
+    direkta = []
+    for f in flaggor:
+        text = norm(" ".join(str(f.get(k, "")) for k in ("namn", "typ", "not", "noter", "info")))
+        poang = sum(1 for w in termer if w in text)
+        if poang:
+            direkta.append((poang, f))
+    if direkta:
+        direkta.sort(key=lambda x: (-x[0], float(x[1].get("f", 0))))
+        return [dict(f, id=f"F{i:03d}") for i, (_p, f) in enumerate(direkta[:limit], 1)]
+
+    hits = []
+    for e in signaler:
+        text = norm(" ".join(str(e.get(k, "")) for k in ("namn", "kat", "info")))
+        poang = sum(1 for w in termer if w in text)
+        if poang:
+            hits.append((poang, e))
+    if not hits:
+        return []
+    kategorier = set().union(*(_KIWI_TYPER_FOR_KATEGORI.get(str(e.get("kat", "")).casefold(), set())
+                               for _p, e in hits))
+    relaterade = [f for f in flaggor if typ_for(f) in kategorier]
+    relaterade.sort(key=lambda f: (str(typ_for(f)), float(f.get("f", 0))))
+    return [dict(f, id=f"F{i:03d}") for i, f in enumerate(relaterade[:limit], 1)]
+
+
+def sok_prompt(query, kandidater):
+    """Skapar ett avgränsat AI-uppdrag med en sluten lista av flaggkandidater."""
+    system = ("Du hjälper till att hitta en radiosignal. Svara endast med giltig JSON i formen "
+              '{"results":["F001","F002"]}. '
+              "Välj högst 12 ID:n ur listan, rangordnade efter relevans. Ta inte med namn, frekvenser, skäl "
+              "eller andra uppgifter. Hitta inte på ID:n. Flaggornas namn, typ och noter är ledtrådar, inte bevis.")
+    data = [{"id": x["id"], "name": x.get("namn", ""), "type": x.get("typ", ""),
+             "mode": x.get("lage", ""), "frequency_hz": x.get("f"),
+             "notes": x.get("not", x.get("noter", ""))} for x in kandidater]
+    user = f"Sök efter: {query}\nKiwi-flaggor som enda tillåtna kandidater:\n{json.dumps(data, ensure_ascii=False)}"
+    return system, [{"role": "user", "content": user}]
+
+
+def sok_tolka(text, kandidater, limit=12):
+    """Validerar AI-svarets kandidat-ID:n mot flaggorna vi faktiskt skickade."""
+    match = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if not match:
+        raise ValueError("AI-sökningen gav inget giltigt JSON-resultat")
+    try:
+        data = json.loads(match.group(0))
+    except ValueError as ex:
+        raise ValueError("AI-sökningen gav ogiltigt JSON") from ex
+    if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+        raise ValueError("AI-sökningen saknar en resultatlista")
+    tillatna = {x["id"]: x for x in kandidater}
+    ut = []
+    sedda = set()
+    for item in data["results"]:
+        if not isinstance(item, str):
+            continue
+        ident = item
+        if ident not in tillatna or ident in sedda:
+            continue
+        sedda.add(ident)
+        ut.append(tillatna[ident])
+        if len(ut) >= limit:
+            break
+    return ut
 
 
 def systemprompt(analys=None):

@@ -404,6 +404,23 @@ def testa_cw(_args):
                 print(f"Fel vid {wpm} ord/min och blockstorlek {block}: {text.strip()!r}")
                 return 1
 
+    qrm_text = "CQ CQ POTA DE G0DZB/P K"
+    wanted = analys.make_morse(fs, qrm_text, wpm=18)
+    qrm = analys.make_morse(fs, "SOS SOS SOS", wpm=20)
+    n = max(len(wanted), len(qrm))
+    qrm_time = np.arange(n) / fs
+    wanted = np.pad(wanted, (0, n - len(wanted))) * np.exp(2j * np.pi * 375 * qrm_time)
+    qrm = np.pad(qrm, (0, n - len(qrm))) * np.exp(2j * np.pi * 1150 * qrm_time)
+    signal = 0.3 * wanted + 3.0 * qrm
+    signal += (0.01 * (rng.standard_normal(len(signal)) + 1j * rng.standard_normal(len(signal)))).astype(
+        np.complex64)
+    decoder = analys.CwAvkodare()
+    text = "".join(decoder.feed(signal[i:i + 4096], fs, {"fam": "OOK", "f_mid": 375})
+                   for i in range(0, len(signal), 4096))
+    if text.strip() != qrm_text:
+        print(f"Fel vid CW-test med starkare, frekvensseparerad QRM: {text.strip()!r}")
+        return 1
+
     decoder = analys.CwAvkodare()
     uncertain = []
     dot = 0.06
@@ -427,7 +444,7 @@ def testa_cw(_args):
     sos = butter(4, [686, 726], btype="bandpass", fs=audio_fs, output="sos")
     iq = hilbert(sosfiltfilt(sos, audio)).astype(np.complex64)
     decoder = analys.CwAvkodare()
-    text = "".join(decoder.feed(iq[i:i + 16800], audio_fs, {"fam": "OOK"})
+    text = "".join(decoder.feed(iq[i:i + 16800], audio_fs, {"fam": "OOK", "f_mid": 706})
                    for i in range(0, len(iq), 16800))
     if text.strip() != audio_text:
         print(f"Fel vid CW-ljudtest med bärton, fading och brus: {text.strip()!r}")
@@ -464,12 +481,12 @@ def testa_cw(_args):
         iq = hilbert(sosfiltfilt(audio_sos, samples)).astype(np.complex64)
         decoder = analys.CwAvkodare()
         block = max(1, int(rate * 0.35))
-        text = "".join(decoder.feed(iq[i:i + block], float(rate), {"fam": "OOK"})
+        text = "".join(decoder.feed(iq[i:i + block], float(rate), {"fam": "OOK", "f_mid": tone})
                        for i in range(0, len(iq), block))
         print(f"WAV: ton {tone:.1f} Hz, uppskattad takt "
               f"{f'{decoder.wpm:.0f} ord/min' if decoder.wpm else 'okänd'}.")
         print(f"Avkodad text: {text.strip() or '(ingen text)'}")
-    print("CW-avkodaren klarade 8–40 ord/min, brusiga OOK-block och CW-ljud med fading och brus.")
+    print("CW-avkodaren klarade 8–40 ord/min, starkare frekvensseparerad QRM och CW-ljud med fading och brus.")
     return 0
 
 
