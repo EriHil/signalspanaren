@@ -187,7 +187,8 @@ class Fldigi:
         return False
 
     RTTY_BAUD = {45.0: 0, 45.45: 1, 50.0: 2, 56.0: 3, 75.0: 4, 100.0: 5}
-    RTTY_SHIFT = {170.0: 3, 200.0: 5, 425.0: 8, 850.0: 9}
+    # 450 Hz → 425 Hz-läget: fldigis egen shift-inställning ("custom") avkodade inget i 4.2.03
+    RTTY_SHIFT = {170.0: 3, 200.0: 5, 425.0: 8, 450.0: 8, 850.0: 9}
 
     def rtty(self, baud, shift, stopp=1.5):
         """Startar om fldigi med RTTY-inställningarna (de går inte att sätta via XML-RPC)."""
@@ -208,7 +209,15 @@ class Fldigi:
         except Exception:
             pass
         subprocess.run(["pkill", "-f", "fldigi --config-dir"], check=False)
-        time.sleep(2)
+        # vänta tills den gamla processen är borta – annars skriver den över inställningarna när
+        # den avslutas, och den nya startas aldrig (den gamla svarar fortfarande)
+        for _ in range(60):
+            if subprocess.run(["pgrep", "-f", "fldigi --config-dir"], capture_output=True).returncode != 0:
+                break
+            time.sleep(0.5)
+        else:
+            subprocess.run(["pkill", "-9", "-f", "fldigi --config-dir"], check=False)
+            time.sleep(1)
         open(konf, "w", encoding="utf-8").write(txt)
         return self.starta()
 
@@ -223,7 +232,9 @@ class Fldigi:
             if modem != "CW":
                 self.s.main.set_reverse(bool(omvand))
             self.s.main.set_afc(True)
-            self.s.main.set_squelch(False)      # brusspärren skulle tysta svaga signaler
+            self.s.main.set_squelch(modem != "CW")  # CW: av (tystar svaga signaler); RTTY: på (annars brus → skräp)
+            if modem != "CW":
+                self.s.main.set_squelch_level(10.0)  # standardnivån 30 tappade tecken
             self.s.text.clear_rx()
             subprocess.run(["paplay", "-d", "cwjamfor", p], env=self.env, check=True)
             time.sleep(1.0)
