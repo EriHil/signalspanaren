@@ -2599,6 +2599,10 @@ class Analyzer:
             if use is not None and zn is not None:
                 # varje avkodare har en egen läspekare: när den startar får den hela ringbufferten
                 # (ca 4 s), så att början av en sändning inte går förlorad medan klassningen kommer ikapp
+                if getattr(dd, "_ptr", None) is not None and self.tap.ring is not None \
+                        and self.tap.total - dd._ptr > len(self.tap.ring):
+                    dd.reset()                   # data har gått förlorad (lång paus): börja om, annars
+                    dd._ptr = None               # läser avkodaren över hoppet i bitströmmen
                 zd, dd._ptr = self.tap.since(dd._ptr if getattr(dd, "_ptr", None) is not None else -10 ** 12)
                 if zd is None or not len(zd):
                     continue
