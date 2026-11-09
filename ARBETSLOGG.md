@@ -263,3 +263,45 @@ GUI-integration). Ett tänkbart nästa steg är en hybrid som väljer metod efte
 Kvar att göra: svag signal (26 %). Signalspanaren missar de första sekunderna medan
 analysen klassar, men fldigi ska ställas in för hand. Nästa modulationstyp enligt planen:
 NAVTEX/SITOR-B, PSK31 och POCSAG (multimon-ng som referens).
+
+---
+
+## 2026-11-09 (forts.) – NAVTEX, PSK31 och POCSAG
+
+Samma metod som för CW och RTTY: en generator med störningar och facit, mätning genom hela
+analyskedjan (som i programmet), referensavkodare och åtgärder i tur och ordning.
+
+### Gemensamt
+- `TvatonsBas` (analys.py): tvåtonsdetektorn från RTTY är utbruten och används av RTTY, NAVTEX
+  och POCSAG. Den innehåller tonsökning kring klicket (tonerna måste turas om), störnings-
+  spärr, ett filter per ton med nivå per ton (ATC), en mitt som flyttas långsamt och alltid
+  en standard-shift.
+- Analysen: en avkodare med egen synk matas i upp till 30 s även om klassningen inte passar.
+  Bland avkodare med synk går den med högst `PRIORITET` först (NAVTEX före RTTY). En avkodare
+  nollställs om data har gått förlorad för den.
+- Simulatorn skapar generatorsignalerna i en bakgrundstråd. Självtestet gav "FEL" eftersom
+  starten tog ~3,8 s; det är rättat och ger nu OK.
+
+### Resultat
+
+| | Före | Efter | Referens |
+|---|---|---|---|
+| NAVTEX (7 scenarier, teckenfel) | 46,4 % | 19,6 % | – |
+| PSK31/63 (8 scenarier, teckenfel) | 33,5 % | **2,4 %** | – |
+| POCSAG (102 sidor, rätt/falska) | 74 / 27 | **77 / 1** | multimon-ng 69 / 2 |
+| RTTY (som bieffekt) | 4,8 % | 3,1 % | fldigi 20,3 % |
+
+- **NAVTEX**: ren signal, selektiv fädning och drift är felfria, tätt band ger 4,5 %. Kvar:
+  svag signal 24 %, knaster 40 % (klassningen förvirras och avkodaren startar efter fasningen)
+  och 518 kHz 69 %.
+- **PSK31**: felet var att takten valdes ur analysens bredd. Brus och grannar gjorde den
+  > 105 Hz, och övertonen 62 Bd syns, så PSK31 lästes som PSK63. Nu körs två spår parallellt
+  och det med flest giltiga varicode-tecken vinner. Det finns också ett FIR-lågpass vid
+  symboltakten, och bärvågen söks inom ±10 Hz från klicket.
+- **POCSAG**: tvåtonsdetektor på 24 kHz med alla takter parallellt. Fädning gick från 7 till
+  12 av 12, och grannkanalen ger inte längre falska sidor. Kvar: svag signal, som analysen
+  klassar som SSB/AM och då gör kanalen för smal.
+
+### Kvar att göra
+- Analysens klassning av svaga och störda signaler (NAVTEX i knaster, svag POCSAG).
+- ALE, DMR och väderfax är inte genomgångna med den här metoden.
