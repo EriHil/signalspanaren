@@ -1384,31 +1384,22 @@ ITA2_LTRS = "\0E\nA SIU\rDRJNFCKTZLWHYPQOBG\x0eMXV\x0f"
 ITA2_FIGS = "\x003\n- '87\r\x054\x07,!:(5+)2#6019?&\x0e./=\x0f"
 
 
-class RttyAvkodare(Avkodare):
-    """Baudot/ITA2-RTTY: 1 startbit, 5 databitar (LSB först), 1–2 stoppbitar.
-
-    Avkodaren lär sig signalen själv och använder analysens mätvärden bara som utgångspunkt:
-    1. Tonerna: mitten finjusteras ur spektrumet (det tonpar med rätt shift som har mest energi),
-       shiften avrundas till en standard (170/200/425/450/850 Hz).
-    2. Tvåtonsdetektor: ett filter per ton (ungefär en bit långt) i stället för frekvens-
+class TvatonsBas(Avkodare):
+    """Gemensam grund för avkodare av tvåtons-FSK (RTTY, NAVTEX/SITOR-B):
+    1. Tonerna: mitten finjusteras ur spektrumet kring klicket (det tonpar med en standard-shift
+       vars toner finns båda och turas om), shiften avrundas till en standard.
+    2. Störningsspärr: FSK har jämn amplitud, så korta pulser långt över den normala nivån nollas.
+    3. Tvåtonsdetektor: ett filter per ton (ungefär en bit långt) i stället för frekvens-
        diskriminator – tål brus mycket bättre. Varje tons nivå normeras för sig (ATC), så
-       selektiv fädning (mark och space fädar olika) inte flyttar beslutsgränsen.
-    3. Ramsynk körs parallellt för alla standardtakter och båda polariteterna; den som ramar
-       bäst skrivs ut. Ett tillfälligt fel i analysens takt nollställer alltså ingenting."""
-    namn = "RTTY (Baudot/ITA2)"
-    STD = (45.45, 50.0, 75.0, 100.0)
+       selektiv fädning (mark och space fädar olika) inte flyttar beslutsgränsen."""
     SHIFTAR = (170.0, 200.0, 425.0, 450.0, 850.0)
     RR = 2400.0        # Hz, arbetstakt
     HIST_S = 4.0       # s historik
     ATC_S = 0.35       # s, fönster för tonernas nivå (tränat: kortare klarar selektiv fädning)
-    MIN_OK = 0.45      # poäng (andel godkända ramar × bitarnas tydlighet) som krävs för att skriva ut
     MIN_SNR = 3.0      # dB, tonparet måste synas över bruset
     NB = 4.0           # störningsspärr: nollar sampel starkare än NB × normal nivå
 
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
+    def _tva_reset(self):
         self.acc = np.zeros(0, np.complex64)
         self.y = np.zeros(0, np.complex64)
         self.base = 0                     # absolut index för y[0]
@@ -1417,23 +1408,36 @@ class RttyAvkodare(Avkodare):
         self.nb = None                    # störningsspärrens referensnivå
         self.shpoang = {}                 # shift: (poäng i dB, mitt, energi)
         self.sh = None                    # shift (Hz)
-        self.fr = {(b, p): self._mk() for b in self.STD for p in (0, 1)}
-        self.best = None
-        self.baud = None
-        self.synkat = False               # har haft synk (då spelas inte gammal text upp igen)
 
-    @staticmethod
-    def _mk():
-        return {"hist": deque(maxlen=30), "text": [], "figs": False, "pos": None, "emit": 0, "ok": 0, "q": 0.0}
+    def _tva_mata(self, z, fs, feat):
+        """Tar emot nya sampel (decimerar, störningsspärr, tonerna). Sant när tonerna är kända."""
+        if len(z) == 0:
+            return False
+        k = max(1, int(round(fs / self.RR)))
+        self.RR = fs / k
+        x = np.concatenate((self.acc, np.asarray(z, np.complex64)))
+        n = len(x) // k
+        self.acc = x[n * k:]
+        if n == 0:
+            return False
+        ny = x[:n * k].reshape(n, k).mean(axis=1)
+        a = np.abs(ny)
+        med = float(np.median(a)) if len(a) else 0.0
+        self.nb = med if self.nb is None else 0.9 * self.nb + 0.1 * med
+        ny = np.where(a > self.NB * self.nb, 0, ny).astype(np.complex64)
+        self.y = np.concatenate((self.y, ny))
+        self._toner(feat)
+        return self.sh is not None and len(self.y) >= self.RR * 0.5
 
-    def passar(self, feat):
-        b, s = feat.get("baud"), feat.get("shift")
-        if b and (abs(b - 100) < 5 or abs(b - 50) < 2.5) and s and 130 <= s <= 230:
-            return False                 # SITOR-B/NAVTEX-signatur (fasningen ser ut som 50 Bd) – sköts av NAVTEX
-        return feat.get("fam") == "FSK2" and b and 40 <= b <= 115 and s and 60 <= s <= 1100
+    def _trimma(self, behovs_fran):
+        """Släng historik före absolut index behovs_fran (men behåll högst HIST_S sekunder)."""
+        keep = behovs_fran - int(self.ATC_S * self.RR) - 1
+        keep = max(keep, len(self.y) + self.base - int(self.HIST_S * self.RR))
+        cut = keep - self.base
+        if cut > 0:
+            self.y = self.y[cut:]
+            self.base += cut
 
-    def har_synk(self):
-        return self.best is not None
 
     # ── 1. tonerna ────────────────────────────────────────────────────
     def _toner(self, feat):
@@ -1518,27 +1522,43 @@ class RttyAvkodare(Avkodare):
         ms = np.maximum(ms, 0.25 * mm) + 1e-12      # i längden (annars tomgång: bara mark)
         return (am / mm - as_ / ms).astype(np.float32)
 
+
+class RttyAvkodare(TvatonsBas):
+    """Baudot/ITA2-RTTY: 1 startbit, 5 databitar (LSB först), 1–2 stoppbitar.
+
+    Tonerna och tvåtonsdetektorn kommer från TvatonsBas. Ramsynk körs parallellt för alla
+    standardtakter och båda polariteterna; den som ramar bäst skrivs ut. Ett tillfälligt fel i
+    analysens takt nollställer alltså ingenting."""
+    namn = "RTTY (Baudot/ITA2)"
+    STD = (45.45, 50.0, 75.0, 100.0)
+    MIN_OK = 0.45      # poäng (andel godkända ramar × bitarnas tydlighet) som krävs för att skriva ut
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self._tva_reset()
+        self.fr = {(b, p): self._mk() for b in self.STD for p in (0, 1)}
+        self.best = None
+        self.baud = None
+        self.synkat = False               # har haft synk (då spelas inte gammal text upp igen)
+
+    @staticmethod
+    def _mk():
+        return {"hist": deque(maxlen=30), "text": [], "figs": False, "pos": None, "emit": 0, "ok": 0, "q": 0.0}
+
+    def passar(self, feat):
+        b, s = feat.get("baud"), feat.get("shift")
+        if b and (abs(b - 100) < 5 or abs(b - 50) < 2.5) and s and 130 <= s <= 230:
+            return False                 # SITOR-B/NAVTEX-signatur (fasningen ser ut som 50 Bd) – sköts av NAVTEX
+        return feat.get("fam") == "FSK2" and b and 40 <= b <= 115 and s and 60 <= s <= 1100
+
+    def har_synk(self):
+        return self.best is not None
+
     # ── 3. ramsynk ────────────────────────────────────────────────────
     def feed(self, z, fs, feat):
-        if len(z) == 0:
-            return ""
-        k = max(1, int(round(fs / self.RR)))
-        self.RR = fs / k
-        x = np.concatenate((self.acc, np.asarray(z, np.complex64)))
-        n = len(x) // k
-        self.acc = x[n * k:]
-        if n == 0:
-            return ""
-        ny = x[:n * k].reshape(n, k).mean(axis=1)
-        # störningsspärr: RTTY har jämn amplitud, så korta pulser långt över den normala nivån
-        # (åskknaster, tändstörningar) nollas innan tonfiltren
-        a = np.abs(ny)
-        med = float(np.median(a)) if len(a) else 0.0
-        self.nb = med if self.nb is None else 0.9 * self.nb + 0.1 * med
-        ny = np.where(a > self.NB * self.nb, 0, ny).astype(np.complex64)
-        self.y = np.concatenate((self.y, ny))
-        self._toner(feat)
-        if self.sh is None or len(self.y) < self.RR * 0.5:
+        if not self._tva_mata(z, fs, feat):
             return ""
         marg = int(self.ATC_S * self.RR / 2) + 1
         for b in self.STD:
@@ -1578,13 +1598,7 @@ class RttyAvkodare(Avkodare):
             self.synkat = True
         self.best = top
         self.baud = top[0] if top else self.baud
-        # släng historik som ingen ramning behöver
-        keep = min(m["pos"] for m in self.fr.values()) - int(self.ATC_S * self.RR) - 1
-        keep = max(keep, len(self.y) + self.base - int(self.HIST_S * self.RR))
-        cut = keep - self.base
-        if cut > 0:
-            self.y = self.y[cut:]
-            self.base += cut
+        self._trimma(min(m["pos"] for m in self.fr.values()))       # historik som ingen ramning behöver
         if top is None:
             return ""
         m = self.fr[top]
