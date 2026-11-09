@@ -187,7 +187,67 @@ Analysen säger "Osäker – klassa själv", men användaren har inget sätt att
 | 4. Bredare facit (VHF, FM, 4-FSK, MSK, OFDM) | Mest inspelning | Hög | [ ] |
 | 5. Markörer och bitexport | Medelstor GUI-kod | Medel | [ ] |
 
-## 7. Där Signalspanaren redan är bäst
+## 7. Andra program för signalanalys
+
+Kontrollerat 2026-11-09. Licensen är läst ur LICENSE-filen i varje projekts källkod, och "senaste ändring" är datumet på senaste commit. Programmen är inte installerade eller provade.
+
+### Öppen källkod
+
+| Program | Licens | Senaste ändring | Vad det gör | Nytta för oss |
+|---|---|---|---|---|
+| **SigDigger** + **Suscan** (BatchDrake) | LGPL-3.0 | 2026-02-11 / 2026-08-06 | Analys i realtid på Linux. Man markerar en signal och får en "inspektör" för ASK, FSK, PSK och flerbärvåg, med skattning av symboltakt, konstellation och symbolutvinning. | Den närmaste konkurrenten till vår signalanalys. Förebild för steg 5 i planen (markörer och bitexport). |
+| **IQEngine** | MIT | 2025-12-19 | Webbverktyg för att bläddra i och analysera SigMF-inspelningar, med plugins. | Källa till riktiga SigMF-klipp för steg 1 i planen. Varje inspelning kan ha egen licens, så kontrollera den innan något läggs i repot. |
+| **SigMF** (specifikationen) | CC BY-SA 4.0 | 2026-01-12 | Formatet för IQ-filer med metadata som vi redan använder. | Exempelfilerna är testdata. CC BY-SA kräver att upphovet anges. |
+| **TorchSig** | MIT | 2026-08-31 | Verktyg för maskininlärning som genererar signaler i 53 klasser (Sig53): FSK, MSK, PSK, QAM, OFDM, OOK med flera, vid valfri SNR. | Ett standardiserat facit med känd SNR för steg 2 i planen. MIT-licensen gör det enkelt att använda. |
+| **RadioML 2016/2018** (DeepSig) | CC BY-NC-SA 4.0 (enligt DeepSigs äldre sida) | – | 2 miljoner exempel i 24 modulationstyper, SNR −20 till +30 dB. | **Bara för lokal testning.** NC (inte kommersiellt) går inte ihop med GPL, så datan får inte läggas i repot. |
+| **Artemis** (AresValley) | GPL-3.0 | 2026-11-03 | Databas över signaler byggd på sigidwiki, cirka 500 typer, med ljud och vattenfallsbilder. Version 4 använder SQLite. | Jämför och utöka `signaldb.py`. Själva programmet är GPL-3.0, men licensen för sigidwikis innehåll är **inte bekräftad**. Ingen data ska föras in förrän det är kontrollerat. |
+| **inspectrum** | GPL-3.0 | 2025-12-01 | Manuell analys av inspelade IQ-filer med markörer för symboltakt. | Förebild för steg 5 i planen. |
+| **Universal Radio Hacker** | GPL-3.0 | 2025-12-19 | Bakåtkompilering av protokoll: från signal till bitar till fält. | Målet för bitexporten i steg 5: exportera till ett format som URH kan läsa. |
+| **gr-inspector** | GPL-3.0 | 2025-03-03 | GNU Radio-moduler som hittar signaler och skattar parametrar automatiskt. | Utvecklas knappt längre. Bra att jämföra metoder mot, inget att bygga på. |
+| **FISSURE** (AIS) | GPL-3.0 | 2026-11-02 | Ramverk för RF-analys: detektering, klassning, bakåtkompilering. | Idéer för hur detektering, klassning och avkodning kopplas ihop. Innehåller sändande attacker, och de ska vi inte ta efter. |
+| **SDRangel**, **OpenWebRX+** | GPL-3.0 (inte kontrollerat här) | – | Mottagare med många inbyggda avkodare. | Jämför funktionslistor för avkodare. |
+
+### Vad Suscan gör jämfört med oss
+
+En snabb genomgång av Suscans källkod (`analyzer/estimators/`, `analyzer/spectsrcs/`) visar att den använder samma grundmetoder som `analys.py`:
+
+- spektrum av y², y⁴ och y⁸ för PSK-ordning och bärvåg (`exp-2/4/8`; vår motsvarighet är `_power_line`)
+- en cyklisk produkt med fördröjning, z·z*(t−1), för symboltakten (`cyclo`; vi använder `z[1:]·conj(z[:-1])` för momentanfrekvens)
+- autokorrelation för symboltakt (`fac`)
+
+Vi saknar alltså ingen grundmetod här. Det som är bättre i SigDigger är det **manuella** arbetssättet, alltså inspektören, och att den följer frekvensdrift (`inspector/impl/drift.c`). Att följa drift är värt att titta på för långa HF-sändningar.
+
+### Windows-program och kommersiella referenser
+
+| Program | Typ | Användning för oss |
+|---|---|---|
+| MultiPSK | Windows, gratis eller billig licens | Lista över vilka HF-lägen som finns och hur de låter och ser ut |
+| SDR# med tilläggsprogram | Windows, gratis och stängd | Vilka funktioner användare efterfrågar |
+| Sorcerer, Code300-32 (Hoka) | Windows, äldre och stängda | Jämförelsepunkt för klassning av HF-modem |
+| PROCITEC go2MONITOR/go2DECODE | Kommersiell | Läs databladen: vilka vågformer och vilken säkerhet de anger. Sätter mål för `signaldb.py`. |
+| WAVECOM W-CODE | Kommersiell | Samma som ovan |
+| Rohde & Schwarz, Narda SignalShark, Keysight 89600 VSA | Kommersiella mätinstrument | Referens för hur noggrant symboltakt, EVM och konstellation kan mätas |
+
+### Regler för att ta in kod och data
+
+Signalspanaren är GPL-3.0-or-later.
+
+- **GPL-3.0 och LGPL-3.0** (SigDigger, Suscan, Artemis, inspectrum, URH, gr-inspector, FISSURE): kod får tas in om upphovsrätten och licenshuvudet följer med.
+- **MIT** (IQEngine, TorchSig): får tas in om licenstexten följer med.
+- **CC BY-SA 4.0** (SigMF-exempel): data får tas in med upphovet angivet.
+- **CC BY-NC-SA** (RadioML): bara lokalt, aldrig i repot.
+- **Stängda och kommersiella program** (go2MONITOR, WAVECOM, Code300, SDR#, MultiPSK): inga dekompilerade eller bakåtkompilerade delar. Licensvillkoren förbjuder det oftast, och kod som härleds från dem skulle göra Signalspanarens GPL-licens ogiltig för de delarna. Använd i stället publika standarder (STANAG, MIL-STD, ITU-R), datablad och öppna implementationer.
+- **Okänd licens** (sigidwiki-data): kontrollera först.
+
+### Prioritet
+
+1. **TorchSig**: generera ett facit med känd SNR och lägg in i `analystest.py`. Hör till steg 2 i planen.
+2. **SigDigger/Suscan**: studera inspektören och driftföljningen innan steg 5 i planen.
+3. **IQEngine och SigMF-exempel**: riktiga klipp för steg 1 i planen.
+4. **Artemis**: jämför med `signaldb.py` när licensen för sigidwiki är klar.
+5. **go2MONITOR och WAVECOM**: läs databladen för att sätta mål.
+
+## 8. Där Signalspanaren redan är bäst
 
 - Ett program där allt hänger ihop: vattenfall, skanner, logg, analys, avkodning och kartor delar samma data.
 - Automatisk klassning med bevismotor, bandplan som förkunskap och signaldatabas. Det har ingen av de andra.
@@ -201,5 +261,13 @@ Analysen säger "Osäker – klassa själv", men användaren har inget sätt att
 - DragonOS-artiklar: <https://www.rtl-sdr.com/tag/dragonos/>, <https://www.linuxlinks.com/dragonos-software-defined-radio-distribution/>, <https://hackaday.com/2020/04/11/software-defined-radio-made-easy>
 - SigintOS: <https://www.rtl-sdr.com/sigintos-a-linux-distro-for-signal-intelligence/>, <https://www.rtl-sdr.com/tag/sigintos/>, <https://www.infosecinstitute.com/resources/penetration-testing/sigintos-signal-intelligence-via-a-single-graphical-interface/>, <https://medium.com/@tomac/sigintos-a-wireless-pentest-distro-review-a7ea93ee8f8b>
 - SIGpi (närliggande projekt): <https://www.rtl-sdr.com/?p=57105>
+- SigDigger och Suscan: <https://github.com/BatchDrake/SigDigger>, <https://github.com/BatchDrake/suscan>
+- IQEngine: <https://github.com/IQEngine/IQEngine>, SigMF: <https://github.com/sigmf/SigMF>
+- TorchSig: <https://github.com/TorchDSP/torchsig>, artikel: <https://arxiv.org/pdf/2207.09918>
+- RadioML (licens): <https://deepsig.squarespace.com/datasets-old>
+- Artemis: <https://github.com/AresValley/Artemis>, sigidwiki: <https://sigidwiki.com/>
+- inspectrum: <https://github.com/miek/inspectrum>, URH: <https://github.com/jopohl/urh>
+- gr-inspector: <https://github.com/gnuradio/gr-inspector>, FISSURE: <https://github.com/ainfosec/FISSURE>, <https://fissure.readthedocs.io/>
+- Avsnitt 7: licens och datum lästa ur projektens källkod (git, 2026-11-09).
 
 Verktygslistorna för DragonOS bygger delvis på äldre artiklar och kan skilja sig från den senaste ISO:n (Noble R7/R8). SigintOS 2.0 saknar en publik funktionslista.
