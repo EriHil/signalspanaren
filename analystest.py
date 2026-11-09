@@ -16,6 +16,7 @@ analysen bättre eller sämre, och som underlag för att träna klassningen.
   python3 analystest.py samla "DWD RTTY 10,1008 MHz"   bara vissa
   python3 analystest.py spela-in --frekvens 7.1 --fam SSB --bredd 1800-3200 --namn "SSB 40 m"
                                                ett eget klipp med facit (t.ex. något du hört)
+  python3 analystest.py fax                    mät väderfax-avkodaren genom hela analyskedjan
   python3 analystest.py dmr                    mät DMR-avkodaren genom hela analyskedjan
   python3 analystest.py ale                    mät ALE-avkodaren genom hela analyskedjan
   python3 analystest.py pocsag                 mät POCSAG-avkodaren genom hela analyskedjan
@@ -658,6 +659,25 @@ def dmr(args):
     return 0
 
 
+def fax(args):
+    import faxgenerator as G
+    tot = []
+    print(f"{'Scenario':12} {'Likhet':>7}  Avkodaren")
+    print("─" * 70)
+    for sc in G.SCENARIER:
+        ls = []
+        for seed in range(args.seed, args.seed + 2):
+            z, facit = G.generera(G.scenario(sc, np.random.default_rng(seed)), G.FS, seed)
+            an, _ = kor_analys(z, G.FS, 7.88e6, gissning=1000.0)
+            d = [x for x in an.dec if x.namn.startswith("Väderfax")][0]
+            ls.append(G.likhet(facit, d.bild))
+        tot.append(np.mean(ls))
+        print(f"{sc:12} {np.mean(ls):7.2f}  {d.varden()[0][1]}", flush=True)
+    print("─" * 70)
+    print(f"{'Medel':12} {np.mean(tot):7.2f}  (korrelation med den sända bilden, 1 = perfekt)")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="analystest", description="Mät Signalspanarens signalanalys mot facit.")
     p.add_argument("--mapp", default=KLIPP_DIR, help=f"mapp för facit-klipp (standard {KLIPP_DIR})")
@@ -680,6 +700,8 @@ def main():
     e.add_argument("--namn")
     e.add_argument("--kiwi", metavar="ADRESS")
     e.add_argument("--sekunder", type=float, default=20.0)
+    fx = sub.add_parser("fax", help="mät fax-avkodaren genom hela analyskedjan (faxgenerator.py)")
+    fx.add_argument("--seed", type=int, default=1)
     dm = sub.add_parser("dmr", help="mät DMR-avkodaren genom hela analyskedjan (dmrgenerator.py)")
     dm.add_argument("--seed", type=int, default=1)
     al = sub.add_parser("ale", help="mät ALE-avkodaren genom hela analyskedjan (alegenerator.py)")
@@ -697,7 +719,7 @@ def main():
     args = p.parse_args()
     return {"mat": mat, "samla": samla, "spela-in": spela_in, "morse": morse, "rtty": rtty,
             "navtex": navtex, "psk": psk, "pocsag": pocsag,
-            "ale": ale, "dmr": dmr}[args.kommando](args)
+            "ale": ale, "dmr": dmr, "fax": fax}[args.kommando](args)
 
 
 if __name__ == "__main__":

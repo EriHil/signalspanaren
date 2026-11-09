@@ -340,6 +340,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
                                  med alegenerator.py
   python3 analystest.py dmr      mäter DMR (ren, svag, fadning, frekvensfel, tand, granne)
                                  med dmrgenerator.py
+  python3 analystest.py fax      mäter väderfax (ren, svag, fadning, frekvensfel, klockfel, qrn,
+                                 granne) med faxgenerator.py – likhet med den sända bilden
   python3 cwtrana.py '{"FILTER": [0.4, 0.5, 0.6]}'
                                  tränar Morse-avkodarens inställningar: rutnätssökning mot
                                  fallen i analystest.py morse, generatorns scenarier och de

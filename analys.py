@@ -356,6 +356,30 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0, lutning=False):
         kam = _mfsk_kam(z, fs, survey_bw)
         if kam is not None:
             return kam
+    # faxets startton (FM ±400 Hz som hoppar 300 gånger/s) har ett linjespektrum med 300 Hz mellan
+    # linjerna; en svag sådan mäts som den starkaste linjen – hela kammen gäller
+    if r is not None and r[1] < 500.0:
+        kam = _mfsk_kam(z, fs, survey_bw, avstand=300.0, n=5, min_toner=4)
+        if kam is not None:
+            return kam[0], 1150.0, False
+    # bred FSK med 700–900 Hz mellan tonerna (fax mitt i en bild: mest den vita tonen; RTTY 850 Hz): en
+    # svag signal mäts som den ena tonen. Finns den andra tonen och turas de om, gäller paret
+    if r is not None and r[1] < 500.0:
+        nfft = int(np.clip(_pow2(fs / 8.0), 256, 16384))
+        while nfft > 256 and len(z) // nfft < 8:
+            nfft //= 2
+        f, P = _welch(np.asarray(z, np.complex64), fs, nfft)
+        Pd = 10 * np.log10(uniform_filter1d(P, 3, mode="nearest") + 1e-30)
+        floor = float(np.percentile(Pd, 25))
+        bast = None
+        for d in np.arange(-900.0, -699.0, 10.0).tolist() + np.arange(700.0, 901.0, 10.0).tolist():
+            if abs(r[0] + d) > survey_bw / 2:
+                continue
+            v = float(np.interp(r[0] + d, f, Pd))
+            if v > floor + 5 and (bast is None or v > bast[0]):
+                bast = (v, d)
+        if bast is not None and _vaxlar(z, fs, nfft, float(r[0]), float(r[0] + bast[1])):
+            return r[0] + bast[1] / 2, abs(bast[1]) + 300.0, False
     # bred FSK (personsökare, ±3–5 kHz): en svag signal mäts som bara den ena tonen, långt från klicket.
     # Finns en spegelton på andra sidan och turas de om, är det ett FSK-par
     if r is not None and survey_bw >= 10000.0 and abs(r[0]) >= 1500.0 and r[1] < 1.5 * abs(r[0]):

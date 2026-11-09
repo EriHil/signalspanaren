@@ -882,6 +882,7 @@ class FaxAvkodare(FiAvkodare):
     namn = "Väderfax (HF-fax)"
     LPM = 120
     W = 1200
+    LP_HZ = 650.0      # kanalfiltrets gräns kring mitten (faxet: ±400 Hz + bildens bandbredd)
 
     def __init__(self):
         self.reset()
@@ -898,30 +899,63 @@ class FaxAvkodare(FiAvkodare):
         self.status = "väntar på signal"
         self.zc_hist = []
         self.fax_synk = False      # startton eller fasningspuls sedd – först då är det säkert fax
+        self.ton_rad = 0           # analyssteg i rad med samma start-/stoppton
+        self.ton_senast = None
+        self.lp = None
 
     def passar(self, feat):
         k = feat.get("kandidater") or []
         if k and k[0][1]["namn"].startswith("Väderfax"):
             return True
         occ, fam = feat.get("occ_bw") or 0, feat.get("fam")
-        return fam in ("FM", "FSK2") and 650 <= occ <= 1300 and not feat.get("baud")
+        if fam in ("FM", "FSK2") and 650 <= occ <= 1300 and not feat.get("baud"):
+            return True
+        # en väderkarta är mest vit med tunna linjer: tonen ligger still med korta hopp och klassas
+        # som OOK eller okänd – på kortvåg räcker faxets bredd (starttonen/fasningen avgör synken)
+        bw = feat.get("bredd_uppmatt") or occ
+        return fam in ("OOK", "OKÄND", "LIN") and 0 < (feat.get("f_abs") or 0) < 30e6 and 650 <= bw <= 1300
 
     def feed(self, z, fs, feat):
         spl = fs * 60.0 / self.LPM                # samples per rad
+        # kanalfilter före diskriminatorn (±LP_HZ kring mitten): brus och en granne utanför faxets
+        # ±400 Hz kommer annars med i diskriminatorn
+        mid0 = feat.get("klick_off", feat.get("f_mid", 0.0))
+        if self.lp is None or self.lp[0] != fs:
+            from scipy.signal import firwin, lfilter_zi
+            h = firwin(int(fs / 60) | 1, self.LP_HZ, fs=fs)
+            self.lp = [fs, h, lfilter_zi(h, 1.0).astype(np.complex128) * 0, 0]
+        from scipy.signal import lfilter
+        z = np.asarray(z, np.complex64)
+        t = (self.lp[3] + np.arange(len(z))) / fs
+        self.lp[3] += len(z)
+        y, self.lp[2] = lfilter(self.lp[1], 1.0, z * np.exp(-2j * np.pi * mid0 * t), zi=self.lp[2])
+        z = (y * np.exp(2j * np.pi * mid0 * t)).astype(np.complex64)
         v = self._fi(z, fs, max(1, fs / 2400))
         mid = feat.get("f_mid", 0.0)
         # IOC-start (300 Hz) och stopp (450 Hz): räkna nollgenomgångar runt mitten
         if len(v) > fs * 0.2:
             zc = np.count_nonzero(np.diff(np.signbit(v - mid))) / (len(v) / fs) / 2
             spread = np.percentile(v, 90) - np.percentile(v, 10)
+            ton = None
             if spread > 500:
-                if abs(zc - 300) < 25:
-                    if self.status != "startton":
-                        self._new_image()
-                    self.status = "startton"
-                    self.fax_synk = True
-                elif abs(zc - 450) < 30:
-                    self.status = "stoppton – bilden klar"
+                # start- (300 Hz) och stopptonen (450 Hz) är jämna fyrkantvågor: en tydlig spektrallinje i
+                # den växlande signalen. Kartans täta linjer kan ge lika många nollgenomgångar men ingen linje
+                sq = np.sign(v - mid)
+                P = np.abs(np.fft.rfft(sq * np.hanning(len(sq)))) ** 2
+                ff = np.fft.rfftfreq(len(sq), 1 / fs)
+                tot = float(P[ff > 50].sum()) + 1e-12
+                for f_t in (300.0, 450.0):
+                    if abs(zc - f_t) < 0.1 * f_t and P[np.abs(ff - f_t) < 8].sum() / tot > 0.4:
+                        ton = f_t
+            self.ton_rad = self.ton_rad + 1 if (ton is not None and ton == self.ton_senast) else (1 if ton else 0)
+            self.ton_senast = ton
+            if ton == 300.0 and self.ton_rad >= 2:            # minst ~0,7 s startton
+                if self.status != "startton":
+                    self._new_image()
+                self.status = "startton"
+                self.fax_synk = True
+            elif ton == 450.0 and self.ton_rad >= 2:
+                self.status = "stoppton – bilden klar"
         lo_, hi_ = np.percentile(v, 1), np.percentile(v, 99)
         if hi_ - lo_ > 400:
             self.lo = lo_ if self.lo is None else self.lo * 0.9 + lo_ * 0.1
@@ -968,7 +1002,9 @@ class FaxAvkodare(FiAvkodare):
         dev = np.abs(s - rest)
         i = int(np.argmax(dev))
         others = np.delete(m, np.arange(i, i + w) % self.W)
-        if dev[i] > 0.45 and np.std(others) < 0.18:      # bara under fasningsraderna
+        # bara under fasningsraderna: pulsen sticker ut tydligt mot resten av raden (relativt, så att en
+        # brusig signal också fasas – medelvärdet av 20 rader dämpar bruset)
+        if dev[i] > 0.3 and dev[i] > 3.0 * np.std(others):
             self.offset = int(i % self.W)
             self.fax_synk = True
 
