@@ -1098,6 +1098,7 @@ class DmrAvkodare(FiAvkodare):
         self.inv = None
         self.n_lc = 0
         self.sync_w = [{}, {}]
+        self.lp = None
 
     def passar(self, feat):
         b, fam, occ = feat.get("baud"), feat.get("fam"), feat.get("occ_bw") or 0
@@ -1110,8 +1111,19 @@ class DmrAvkodare(FiAvkodare):
         sps = fs / 4800.0
         if self.clk is None:
             self.clk = SymClock(sps)
-        lv = self.levels_from(feat, 4, 1296)
+        z = np.asarray(z, np.complex64)
+        if fs > 14000:
+            # kanalfilter före diskriminatorn: en stark station i grannkanalen (12,5 kHz) fångar den annars,
+            # och filtret dämpar också tändstörningarnas klick
+            if self.lp is None or self.lp[0] != fs:
+                from scipy.signal import firwin, lfilter_zi
+                h = firwin(int(fs / 600) | 1, 6000.0, fs=fs)
+                self.lp = [fs, h, lfilter_zi(h, 1.0).astype(np.complex128) * 0]
+            from scipy.signal import lfilter
+            z, self.lp[2] = lfilter(self.lp[1], 1.0, z, zi=self.lp[2])
+            z = z.astype(np.complex64)
         v = self._fi(z, fs, max(1, sps / 3))
+        lv = self.levels_from(feat, 4, 1296)
         self.syms += self.clk.run(v, lv)
         out = self._scan()
         if len(self.syms) > 6000:
