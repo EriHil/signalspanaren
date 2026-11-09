@@ -12,6 +12,9 @@ kortvåg), QSB och flervägsutbredning; bandet får brus, åskknaster och granna
   python3 rttygenerator.py --scen dwd --sek 60 --ut dwd.wav       ljud (mitt 1500 Hz) + .txt med facit
   python3 rttygenerator.py --scen amator --iq --ut a.wav          IQ i stereo
   python3 rttygenerator.py --lista
+
+NAVTEX/SITOR-B (100 Bd, 170 Hz, FEC): navtex_generera(navtex_scenario(namn, rng)) med scenarierna
+ren, svag, selektiv, qrn, drift, trangt och mw518 (mellanvåg 518 kHz: svag, QSB, knaster).
 """
 import argparse
 import os
@@ -138,6 +141,13 @@ def station_signal(st, fs, n, rng):
             sant.append(ch)
     aktiv = np.zeros(n, bool)
     aktiv[max(0, int(st.start_s * fs)):min(n, int(t * fs))] = True
+    return fsk_kanal(bit, aktiv, st, fs, rng), normera("".join(sant))
+
+
+def fsk_kanal(bit, aktiv, st, fs, rng):
+    """Tvåtons-FSK ur bit per sampel (1 = mark) genom stationens sändare och utbredning:
+    bandbegränsning, frekvensfel/drift, selektiv fädning (mark och space var för sig) och QSB."""
+    n = len(bit)
     if st.filter_hz:
         L = max(1, int(fs / st.filter_hz))
         bit = np.convolve(bit, np.ones(L) / L, mode="same").astype(np.float32)
@@ -152,7 +162,97 @@ def station_signal(st, fs, n, rng):
         z = z * (bit * hm + (1 - bit) * hs)
     if st.qsb:
         z = z * (1 - st.qsb * (0.5 + 0.5 * np.sin(2 * np.pi * tt / st.qsb_period + rng.uniform(0, 6))))
-    return (z * 10 ** (st.niva_db / 20)).astype(np.complex64), normera("".join(sant))
+    return (z * 10 ** (st.niva_db / 20)).astype(np.complex64)
+
+
+# ════════════════════════════════════════════════════════════════════
+# NAVTEX / SITOR-B (100 Bd, 170 Hz, FEC med repetition)
+# ════════════════════════════════════════════════════════════════════
+def navtex_text(rng, station="S", amne="A"):
+    nr = rng.integers(1, 99)
+    return (f"ZCZC {station}{amne}{nr:02d}\n{rng.integers(10, 28)}{rng.integers(0, 24):02d}00 UTC NOV\n"
+            f"{rng.choice(['GOTEBORG', 'STOCKHOLM', 'BODO', 'TALLINN'])} RADIO NAVIGATIONAL WARNING "
+            f"{rng.integers(100, 999)}/26\nSKAGERRAK. LIGHTBUOY {rng.integers(1, 40)} "
+            f"57-{rng.integers(10, 59)}N 010-{rng.integers(10, 59)}E UNLIT.\n"
+            f"WIND SW {rng.integers(4, 9)} TO {rng.integers(10, 14)} M/S.\nNNNN\n")
+
+
+@dataclass
+class NavtexStation(Station):
+    baud: float = 100.0
+    shift: float = 170.0
+    fasning: int = 40            # tecken fasning före meddelandet (verklig NAVTEX: ~10 s)
+
+
+def navtex_signal(st, fs, n, rng):
+    """SITOR-B för en NAVTEX-station och facit (meddelandets text)."""
+    from analysavkodare import sitor_b_bitar
+    bits = sitor_b_bitar(st.text, fasning=st.fasning)
+    tb = 1.0 / (st.baud * (1 + st.taktfel_ppm * 1e-6))
+    b = np.ones(n, np.float32)
+    i0 = int(st.start_s * fs)
+    idx = i0 + (np.arange(len(bits)) * tb * fs).astype(np.int64)
+    for k, v in enumerate(bits):
+        a, e = idx[k], (idx[k + 1] if k + 1 < len(bits) else idx[k] + int(tb * fs))
+        if a >= n:
+            break
+        b[max(0, a):min(e, n)] = v
+    aktiv = np.zeros(n, bool)
+    aktiv[max(0, i0):min(n, i0 + int(len(bits) * tb * fs))] = True
+    return fsk_kanal(b, aktiv, st, fs, rng), normera(st.text)
+
+
+def navtex_scenario(namn, rng):
+    S = NavtexStation
+    if namn == "ren":
+        return Band([S(navtex_text(rng))], snr_db=25)
+    if namn == "svag":
+        return Band([S(navtex_text(rng), qsb=0.4)], snr_db=5)
+    if namn == "selektiv":
+        return Band([S(navtex_text(rng), fd=3, rice=0.7)], snr_db=18)
+    if namn == "qrn":                  # 518 kHz på vintern: mycket knaster
+        return Band([S(navtex_text(rng))], snr_db=12, qrn=6)
+    if namn == "drift":
+        return Band([S(navtex_text(rng), drift_hz=30, taktfel_ppm=200, off_hz=25)], snr_db=18)
+    if namn == "trangt":               # en annan NAVTEX-station och CW intill
+        return Band([S(navtex_text(rng)), S(navtex_text(rng, "B"), off_hz=380, niva_db=6, start_s=3)],
+                    snr_db=18, cw=[CG.Station(CG.cq(rng), wpm=22, off_hz=-240, niva_db=3)])
+    if namn == "mw518":                # mellanvåg: svag, QSB och knaster
+        return Band([S(navtex_text(rng), qsb=0.6, qsb_period=12, fd=0.5, rice=3)], snr_db=8, qrn=3)
+    raise SystemExit(f"Okänt NAVTEX-scenario: {namn}")
+
+
+NAVTEX_SCENARIER = ["ren", "svag", "selektiv", "qrn", "drift", "trangt", "mw518"]
+
+
+def navtex_generera(band, fs=12000, sek=None, seed=1):
+    """Som generera() men stationerna är NAVTEX. sek=None: lagom lång för station 0."""
+    from analysavkodare import sitor_b_bitar
+    rng = np.random.default_rng(seed)
+    st0 = band.stationer[0]
+    if sek is None:
+        sek = st0.start_s + len(sitor_b_bitar(st0.text, fasning=st0.fasning)) / st0.baud + 2.0
+    n = int(fs * sek)
+    z = np.zeros(n, np.complex64)
+    facit = ""
+    for k, st in enumerate(band.stationer):
+        s, sant = navtex_signal(st, fs, n, rng)
+        z += s
+        if k == 0:
+            facit = sant
+    for c in band.cw:
+        z += CG.station_signal(c, fs, n, rng)[0]
+    sigma = 10 ** (-band.snr_db / 20) / np.sqrt(2) * np.sqrt(fs / 500)
+    z += (sigma * (rng.standard_normal(n) + 1j * rng.standard_normal(n))).astype(np.complex64)
+    if band.qrn:
+        for _ in range(rng.poisson(band.qrn * sek)):
+            a = int(rng.uniform(0, n))
+            L = int(fs * rng.uniform(0.003, 0.03))
+            e = min(n, a + L)
+            amp = sigma * rng.uniform(5, 30)
+            z[a:e] += (amp * np.exp(-np.arange(e - a) / max(1, L / 3)) *
+                       (rng.standard_normal(e - a) + 1j * rng.standard_normal(e - a))).astype(np.complex64)
+    return z, facit
 
 
 @dataclass

@@ -16,6 +16,7 @@ analysen bättre eller sämre, och som underlag för att träna klassningen.
   python3 analystest.py samla "DWD RTTY 10,1008 MHz"   bara vissa
   python3 analystest.py spela-in --frekvens 7.1 --fam SSB --bredd 1800-3200 --namn "SSB 40 m"
                                                ett eget klipp med facit (t.ex. något du hört)
+  python3 analystest.py navtex                 mät NAVTEX-avkodaren genom hela analyskedjan
   python3 analystest.py rtty                   mät RTTY-avkodaren genom hela analyskedjan (rttygenerator.py)
   python3 analystest.py morse                  mät Morse-avkodaren (teckenfel vid olika takt, brus,
                                                Farnsworth, handnyckling, fädning)
@@ -541,6 +542,28 @@ def rtty(args):
     return 0
 
 
+def navtex(args):
+    import rttygenerator as R
+    tot = []
+    print(f"{'Scenario':10} {'Fel':>6} {'Täckn.':>7}  {'Avkodaren':30} Slutet av texten")
+    print("─" * 100)
+    for sc in R.NAVTEX_SCENARIER:
+        es, tk = [], []
+        for seed in range(args.seed, args.seed + 2):
+            z, facit = R.navtex_generera(R.navtex_scenario(sc, np.random.default_rng(seed)), 12000, None, seed)
+            an, _ = kor_analys(z, 12000, 5.0e6)
+            ut = R.normera("".join(t for n, t in an.text_q if n.startswith("NAVTEX")))
+            e, t = text_fel(facit, ut)
+            es.append(e)
+            tk.append(t)
+        v = ", ".join(x[1] for d in an.dec if d.namn.startswith("NAVTEX") for x in d.varden())
+        tot.append(np.mean(es))
+        print(f"{sc:10} {np.mean(es) * 100:5.1f} % {np.mean(tk) * 100:5.0f} %  {v[:30]:30} {ut[-40:]!r}", flush=True)
+    print("─" * 100)
+    print(f"{'Medel':10} {np.mean(tot) * 100:5.1f} %")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="analystest", description="Mät Signalspanarens signalanalys mot facit.")
     p.add_argument("--mapp", default=KLIPP_DIR, help=f"mapp för facit-klipp (standard {KLIPP_DIR})")
@@ -563,12 +586,15 @@ def main():
     e.add_argument("--namn")
     e.add_argument("--kiwi", metavar="ADRESS")
     e.add_argument("--sekunder", type=float, default=20.0)
+    nv = sub.add_parser("navtex", help="mät NAVTEX-avkodaren genom hela analyskedjan (rttygenerator.py)")
+    nv.add_argument("--seed", type=int, default=1)
     r = sub.add_parser("rtty", help="mät RTTY-avkodaren genom hela analyskedjan på rttygenerator-scenarier")
     r.add_argument("--seed", type=int, default=1)
     c = sub.add_parser("morse", help="mät Morse-avkodaren på syntetisk CW (takt, brus, Farnsworth, handnyckling)")
     c.add_argument("--seed", type=int, default=1)
     args = p.parse_args()
-    return {"mat": mat, "samla": samla, "spela-in": spela_in, "morse": morse, "rtty": rtty}[args.kommando](args)
+    return {"mat": mat, "samla": samla, "spela-in": spela_in, "morse": morse, "rtty": rtty,
+            "navtex": navtex}[args.kommando](args)
 
 
 if __name__ == "__main__":

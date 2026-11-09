@@ -1357,6 +1357,7 @@ class Avkodare:
     """Basklass. passar(feat) avgör om avkodaren ska köras; feed() får nya samples
     (komplext basband kring analysens mål) och returnerar ny klartext."""
     namn = "?"
+    PRIORITET = 0      # bland avkodare med synk körs bara de med högst prioritet
 
     def passar(self, feat):
         return False
@@ -1408,6 +1409,7 @@ class TvatonsBas(Avkodare):
         self.nb = None                    # störningsspärrens referensnivå
         self.shpoang = {}                 # shift: (poäng i dB, mitt, energi)
         self.sh = None                    # shift (Hz)
+        self.n_c = 0                      # antal skattningar av mitten
 
     def _tva_mata(self, z, fs, feat):
         """Tar emot nya sampel (decimerar, störningsspärr, tonerna). Sant när tonerna är kända."""
@@ -1457,7 +1459,9 @@ class TvatonsBas(Avkodare):
         f = np.fft.fftfreq(nf, 1 / RR)
         o = np.argsort(f)
         f, P = f[o], _smooth(P[o], max(1, int(round(8.0 / (RR / nf)))))
-        kand = [s for s in self.SHIFTAR if not sh or abs(s - sh) / s < 0.15] or [sh]
+        # alltid en standard-shift: analysens mätning väljer bara bland dem (en störd mätning, t.ex.
+        # 135 Hz för en 170 Hz-signal i knaster, ska inte flytta tonfiltren)
+        kand = [s for s in self.SHIFTAR if not sh or abs(s - sh) / s < 0.15] or list(self.SHIFTAR)
         # sök kring klicket (analysen kan flytta kanalens mitt mellan flera signaler i ett tätt band);
         # klicket kan ligga på en av tonerna, så mitten får ligga en halv shift bort
         if feat and feat.get("klick_off") is not None:
@@ -1480,7 +1484,11 @@ class TvatonsBas(Avkodare):
             self.shpoang[s] = (v if p0 is None else 0.8 * p0[0] + 0.2 * v, float(cc[k]), float(e[k]))
         s = max(kand, key=lambda q: self.shpoang[q][0])
         _, c, e = self.shpoang[s]
-        self.c = c if self.sh is None else 0.7 * self.c + 0.3 * c
+        # mitten flyttas snabbt i början och sedan långsamt: en sändare ändrar sig långsamt, och en
+        # granne som stör en enstaka skattning ska inte dra iväg tonfiltren
+        self.n_c = getattr(self, "n_c", 0) + 1
+        a = 0.3 if self.n_c <= 8 else 0.08
+        self.c = c if self.sh is None else (1 - a) * self.c + a * c
         self.sh = s
         # finns signalen kvar? tonparets energi mot bruset vid sidan om, de senaste 0,6 s
         n2 = 1 << int(math.log2(max(64, min(len(self.y), int(RR * 0.6)))))
@@ -2190,6 +2198,7 @@ class Analyzer:
     LOCK_STEPS = 3             # antal mätningar i rad innan låsning
     LOCK_SWITCH_STEPS = 6      # en annan kandidat måste ligga högst så länge för att ta över
     LOCK_HOLD = 2.5            # sekunder som låset hålls kvar när signalen tappas
+    SYNK_HALL = 30.0           # sekunder en avkodare med egen synk matas utan att klassningen passar
 
     def __init__(self, sr, user_db=None):
         self.tap = ChannelTap(sr)
@@ -2557,7 +2566,12 @@ class Analyzer:
         zn, self._ptr = self.tap.since(self._ptr)
         vals, new = [], ""
         locked = [dd for dd in self.dec if dd.har_synk() and getattr(dd, "_ok_feat", None) is not None
-                  and now - dd._ok_t < 4]
+                  and now - dd._ok_t < self.SYNK_HALL]
+        if locked:
+            # flera med synk: den med strängast kontroll går före (NAVTEX:s FEC och 4-av-7-kod före
+            # RTTY, som ramar nästan rätt även på SITOR-B 100 Bd/170 Hz)
+            pmax = max(getattr(dd, "PRIORITET", 0) for dd in locked)
+            locked = [dd for dd in locked if getattr(dd, "PRIORITET", 0) == pmax]
         passar_namn, kord = [], []
         for dd in self.dec:
             try:
@@ -2577,8 +2591,11 @@ class Analyzer:
             elif dd.passar(feat):
                 dd._ok_t, dd._ok_feat = now, feat
                 use = feat
-            elif getattr(dd, "_ok_feat", None) is not None and now - dd._ok_t < 4 and feat.get("fam") != "BRUS":
-                use = dd._ok_feat            # en enstaka missad mätning ska inte bryta avkodningen
+            elif getattr(dd, "_ok_feat", None) is not None and feat.get("fam") != "BRUS" and (
+                    now - dd._ok_t < 4 or (dd.har_synk() and now - dd._ok_t < self.SYNK_HALL)):
+                # en enstaka missad mätning ska inte bryta avkodningen – och en avkodare som har egen
+                # synk matas vidare även när störningar (knaster) förvirrar klassningen en längre stund
+                use = dd._ok_feat
             if use is not None and zn is not None:
                 # varje avkodare har en egen läspekare: när den startar får den hela ringbufferten
                 # (ca 4 s), så att början av en sändning inte går förlorad medan klassningen kommer ikapp

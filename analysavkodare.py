@@ -124,14 +124,21 @@ NAVTEX_AMNE = {"A": "Navigationsvarning", "B": "Meteorologisk varning", "C": "Is
                "X": "Särskild tjänst", "Y": "Särskild tjänst", "Z": "Inga meddelanden"}
 
 
-class NavtexAvkodare(FiAvkodare):
+class NavtexAvkodare(A.TvatonsBas, FiAvkodare):
+    """NAVTEX/SITOR-B: 100 Bd, 170 Hz, 7-bitars CCIR-kod med fyra ettor, FEC (repetition).
+    Bitbesluten kommer från TvatonsBas (filter per ton, nivå per ton, tonsökning kring klicket,
+    störningsspärr); klockan, teckensynken och FEC-avkodningen är NAVTEX-egna."""
     namn = "NAVTEX / SITOR-B"
+    SHIFTAR = (170.0,)
+    PRIORITET = 1      # FEC och 4-av-7-koden: säkrare synk än RTTY på samma takt och shift
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        super().reset()
+        FiAvkodare.reset(self)
+        self._tva_reset()
+        self.ptr = None                  # absolut index: hit har bitbesluten lästs
         self.clk = None
         self.bits = []
         self.chars = []
@@ -147,7 +154,9 @@ class NavtexAvkodare(FiAvkodare):
 
     def passar(self, feat):
         b, s = feat.get("baud"), feat.get("shift")
-        return feat.get("fam") == "FSK2" and b and (abs(b - 100) < 5 or abs(b - 50) < 2.5) and s and 120 <= s <= 260
+        # takten saknas ofta i en svag signal; 170 Hz shift räcker då (avkodaren kontrollerar själv)
+        return feat.get("fam") == "FSK2" and s and 120 <= s <= 260 and (
+            not b or abs(b - 100) < 5 or abs(b - 50) < 2.5)
 
     def har_synk(self):
         return self.align is not None and self.par is not None
@@ -156,13 +165,23 @@ class NavtexAvkodare(FiAvkodare):
         return {"baud": 100.0, "fam": "FSK2", "klass": "2-FSK (SITOR-B 100 Bd)", "shift": 170.0, "toner": 2}
 
     def feed(self, z, fs, feat):
-        sps = fs / 100.0
-        if self.clk is None:
-            self.clk = SymClock(sps)
-        lv = self.levels_from(feat, 2, 170)
-        v = self._fi(z, fs, sps / 4)
-        for k in self.clk.run(v, lv):
-            self.bits.append(1 if k == 1 else 0)       # högre ton = mark = 1
+        if not self._tva_mata(z, fs, feat):
+            return ""
+        x = self._beslut(100.0)                        # > 0: mark (högre tonen) = 1
+        marg = int(self.ATC_S * self.RR / 2) + 1
+        if self.ptr is None or self.ptr < self.base:
+            self.ptr = self.base
+        a, b = self.ptr - self.base, len(x) - marg
+        if b > a:
+            self.ptr += b - a
+            if self.snr >= self.MIN_SNR:               # brusspärr: inga bitar ur bara brus
+                if self.clk is None:
+                    self.clk = SymClock(self.RR / 100.0)
+                for k in self.clk.run(x[a:b], (-1.0, 1.0)):
+                    self.bits.append(1 if k == 1 else 0)
+            else:
+                self.clk = None
+        self._trimma(self.ptr)
         out = self._frame()
         if len(self.bits) > 4000:
             drop = len(self.bits) - 1000
@@ -288,6 +307,16 @@ class NavtexAvkodare(FiAvkodare):
 
 def make_sitor_b(fs, text, shift=170.0):
     """Testsignal: SITOR-B med FEC (repetition 5 tecken senare), första biten = b0."""
+    bits = sitor_b_bitar(text)
+    sps = fs / 100.0
+    n = int(len(bits) * sps)
+    idx = np.minimum((np.arange(n) / sps).astype(np.int64), len(bits) - 1)
+    f = np.where(np.asarray(bits)[idx] == 1, shift / 2, -shift / 2)
+    return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
+
+
+def sitor_b_bitar(text, fasning=60):
+    """SITOR-B-bitar (100 Bd, 1 = mark) för texten: fasning, FEC-sändning och avslutning."""
     rev_l = {c: i for i, c in _LT.items()}
     rev_f = {c: i for i, c in _FG.items()}
     codes = []
@@ -304,7 +333,7 @@ def make_sitor_b(fs, text, shift=170.0):
                 figs = True
             codes.append(rev_f[ch])
     seq = []
-    pre = [C_REP, C_ALPHA] * 60          # fasning (verklig NAVTEX: ca 10 s)
+    pre = [C_REP, C_ALPHA] * fasning     # fasning (verklig NAVTEX: ca 10 s)
     seq += pre
     # position 2k = första sändning (DX), 2k+5 = repetitionen (RX)
     L = len(codes) + 3
@@ -319,11 +348,7 @@ def make_sitor_b(fs, text, shift=170.0):
     bits = []
     for c in seq:
         bits += [(c >> k) & 1 for k in range(7)]
-    sps = fs / 100.0
-    n = int(len(bits) * sps)
-    idx = np.minimum((np.arange(n) / sps).astype(np.int64), len(bits) - 1)
-    f = np.where(np.asarray(bits)[idx] == 1, shift / 2, -shift / 2)
-    return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
+    return bits
 
 
 # ════════════════════════════════════════════════════════════════════
