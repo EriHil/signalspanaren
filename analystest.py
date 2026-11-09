@@ -16,6 +16,7 @@ analysen bättre eller sämre, och som underlag för att träna klassningen.
   python3 analystest.py samla "DWD RTTY 10,1008 MHz"   bara vissa
   python3 analystest.py spela-in --frekvens 7.1 --fam SSB --bredd 1800-3200 --namn "SSB 40 m"
                                                ett eget klipp med facit (t.ex. något du hört)
+  python3 analystest.py ale                    mät ALE-avkodaren genom hela analyskedjan
   python3 analystest.py pocsag                 mät POCSAG-avkodaren genom hela analyskedjan
   python3 analystest.py psk                    mät PSK31/PSK63-avkodaren genom hela analyskedjan
   python3 analystest.py navtex                 mät NAVTEX-avkodaren genom hela analyskedjan
@@ -611,6 +612,28 @@ def pocsag(args):
     return 0
 
 
+def ale(args):
+    import re
+    import alegenerator as G
+    T = [0, 0, 0]
+    print(f"{'Scenario':12} {'Ord rätt':>9} {'Falska':>7}  Avkodaren")
+    print("─" * 70)
+    for sc in G.SCENARIER:
+        r = [0, 0, 0]
+        for seed in range(args.seed, args.seed + 2):
+            z, facit = G.generera(G.scenario(sc, np.random.default_rng(seed)), G.FS, seed)
+            an, _ = kor_analys(z, G.FS, 7.0e6, gissning=2400.0)          # SSB-kanal som i programmet
+            txt = "".join(t for nm, t in an.text_q if nm.startswith("ALE"))
+            ut = [(m.group(1), m.group(2)) for m in re.finditer(r"\[(\w+)\] (.{3})", txt)]
+            r = [x + y for x, y in zip(r, G.jamfor(facit, ut))]
+        v = ", ".join(x[1] for d in an.dec if d.namn.startswith("ALE") for x in d.varden())
+        T = [x + y for x, y in zip(T, r)]
+        print(f"{sc:12} {r[0]:4}/{r[1]:<4} {r[2]:7}  {v}", flush=True)
+    print("─" * 70)
+    print(f"{'Totalt':12} {T[0]:4}/{T[1]:<4} {T[2]:7}  ({T[0] / max(1, T[1]) * 100:.0f} % rätt)")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="analystest", description="Mät Signalspanarens signalanalys mot facit.")
     p.add_argument("--mapp", default=KLIPP_DIR, help=f"mapp för facit-klipp (standard {KLIPP_DIR})")
@@ -633,6 +656,8 @@ def main():
     e.add_argument("--namn")
     e.add_argument("--kiwi", metavar="ADRESS")
     e.add_argument("--sekunder", type=float, default=20.0)
+    al = sub.add_parser("ale", help="mät ALE-avkodaren genom hela analyskedjan (alegenerator.py)")
+    al.add_argument("--seed", type=int, default=1)
     pg = sub.add_parser("pocsag", help="mät POCSAG-avkodaren genom hela analyskedjan (pocsaggenerator.py)")
     pg.add_argument("--seed", type=int, default=1)
     ps = sub.add_parser("psk", help="mät PSK31/PSK63-avkodaren genom hela analyskedjan (pskgenerator.py)")
@@ -645,7 +670,8 @@ def main():
     c.add_argument("--seed", type=int, default=1)
     args = p.parse_args()
     return {"mat": mat, "samla": samla, "spela-in": spela_in, "morse": morse, "rtty": rtty,
-            "navtex": navtex, "psk": psk, "pocsag": pocsag}[args.kommando](args)
+            "navtex": navtex, "psk": psk, "pocsag": pocsag,
+            "ale": ale}[args.kommando](args)
 
 
 if __name__ == "__main__":

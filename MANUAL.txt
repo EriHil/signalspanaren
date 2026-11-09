@@ -336,6 +336,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   python3 analystest.py pocsag   mäter POCSAG (ren, 512, 2400, svag, fadning, frekvensfel, omvand,
                                  mjuk, granne) med pocsaggenerator.py
   python3 pocsaggenerator.py --scen fadning --ut x.wav  syntetisk POCSAG (IQ) med facit (x.txt)
+  python3 analystest.py ale      mäter ALE 2G (ren, svag, fladder, qrn, frekvensfel, lsb, trangt)
+                                 med alegenerator.py
   python3 cwtrana.py '{"FILTER": [0.4, 0.5, 0.6]}'
                                  tränar Morse-avkodarens inställningar: rutnätssökning mot
                                  fallen i analystest.py morse, generatorns scenarier och de

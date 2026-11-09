@@ -351,6 +351,11 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0, lutning=False):
             and 200.0 <= r[1] < 0.4 * rs[1] and rs[0] - rs[1] / 2 <= r[0] <= rs[0] + rs[1] / 2:
         # (under 200 Hz: en egen smal signal – CW, bärvåg – bredvid eller ovanpå ett band, inte en bit av det)
         r = rs[:3]
+    # MFSK-tonraster (ALE): mätningen ser bara de mest använda tonerna – hela rastret gäller
+    if r is None or r[1] < 1500.0:
+        kam = _mfsk_kam(z, fs, survey_bw)
+        if kam is not None:
+            return kam
     # bred FSK (personsökare, ±3–5 kHz): en svag signal mäts som bara den ena tonen, långt från klicket.
     # Finns en spegelton på andra sidan och turas de om, är det ett FSK-par
     if r is not None and survey_bw >= 10000.0 and abs(r[0]) >= 1500.0 and r[1] < 1.5 * abs(r[0]):
@@ -469,6 +474,34 @@ def _fsk_par(z, fs, survey_bw, max_shift=1200.0, vaxling=False):
         mid = float(f[kl] + f[kh]) / 2
         return mid, sep + 150.0, False
     return None
+
+
+def _mfsk_kam(z, fs, survey_bw, avstand=250.0, n=8, min_toner=5):
+    """Ett MFSK-tonraster kring klicket (ALE: 8 toner, 250 Hz isär). Returnerar (mitt, bredd, False) när
+    minst min_toner av rastrets positioner har en topp över bruset, annars None. En svag MFSK-signal
+    mäts annars bara som de mest använda tonerna (en del av bandet)."""
+    bredd = n * avstand
+    if survey_bw < bredd + 200:
+        return None
+    nfft = int(np.clip(_pow2(fs / 8.0), 256, 16384))
+    while nfft > 256 and len(z) // nfft < 8:
+        nfft //= 2
+    f, P = _welch(np.asarray(z, np.complex64), fs, nfft)
+    Pd = 10 * np.log10(uniform_filter1d(P, 3, mode="nearest") + 1e-30)
+    floor = float(np.percentile(Pd, 25))
+    k = (np.arange(n) - (n - 1) / 2) * avstand
+    bast = None
+    for c in np.arange(-300.0, 300.1, 5.0):
+        v = np.interp(c + k, f, Pd)
+        # en topp: över bruset och över mellanrummen mellan positionerna
+        mellan = np.interp(c + k[:-1] + avstand / 2, f, Pd)
+        upp = int(np.sum(v > floor + 6)) if len(v) else 0
+        kontrast = float(np.median(v) - np.median(mellan))
+        if upp >= min_toner and kontrast > 3.0 and (bast is None or upp + kontrast / 10 > bast[0]):
+            bast = (upp + kontrast / 10, c)
+    if bast is None:
+        return None
+    return bast[1], bredd + 150.0, False
 
 
 def _vaxlar(z, fs, nfft, f1, f2):

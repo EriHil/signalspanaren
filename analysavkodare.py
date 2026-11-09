@@ -14,6 +14,7 @@ Alla avkodare får komplext basband från analysens kanalutsnitt (mitt = analyse
 och returnerar ny klartext. Hela meddelanden läggs i .msgs och visas i fliken Avkodat.
 Tabeller: SITOR-B från fldigi (GPL), ALE från MIL-STD-188-141B appendix A.
 """
+import math
 import time
 from collections import deque
 
@@ -706,19 +707,60 @@ class AleAvkodare(FiAvkodare):
         self.n_words = 0
         self.inv = None
         self.calls = []
+        self.ybuf = np.zeros(0, np.complex64)
+        self.ztail = np.zeros(0, np.complex64)
+        self.n0 = 0
+        self.c8 = None
 
     def passar(self, feat):
         fam, b, s, nt = feat.get("fam"), feat.get("baud"), feat.get("shift"), feat.get("toner")
         if fam != "MFSK":
-            return False
+            # ALE klassas ofta fel (det upprepade TO-ordet ger linjer som PSK): på kortvåg räcker en
+            # signal som är lika bred som ALE (750–2500 Hz) – Golay, tripplingen och ordformatet avgör
+            bw = feat.get("bredd_uppmatt") or 0
+            return fam != "BRUS" and 0 < (feat.get("f_abs") or 0) < 30e6 and 1500 <= bw <= 2700
         return (b and abs(b - 125) < 6) or (s and abs(s - 250) < 30 and nt and 6 <= nt <= 8)
+
+    def _toner8(self, z, fs, feat):
+        """Ett filter per ton (8 toner, 250 Hz isär): index för den starkaste tonen per sampel.
+        Tonkammens mitt söks i spektrumet kring klicket."""
+        z = np.asarray(z, np.complex64)
+        L = max(2, int(round(0.8 * fs / 125.0)))
+        ref = feat.get("klick_off", feat.get("f_mid", 0.0)) if feat else 0.0
+        self.ybuf = np.concatenate((self.ybuf, z))[-int(fs * 1.5):]
+        if len(self.ybuf) >= int(fs * 0.5):
+            nf = 1 << int(math.log2(len(self.ybuf)))
+            P = np.abs(np.fft.fft(self.ybuf[-nf:] * np.hanning(nf))) ** 2
+            f = np.fft.fftfreq(nf, 1 / fs)
+            o = np.argsort(f)
+            f, P = f[o], A._smooth(P[o], max(1, int(round(10.0 / (fs / nf)))))
+            cc = np.arange(ref - 150, ref + 150.1, 2.0)
+            k8 = (np.arange(8) - 3.5) * 250.0
+            e = np.array([np.sum(np.log(np.interp(c + k8, f, P) + 1e-30)) for c in cc])
+            c = float(cc[int(np.argmax(e))])
+            self.c8 = c if self.c8 is None else 0.8 * self.c8 + 0.2 * c
+        c = self.c8 if self.c8 is not None else ref
+        x = np.concatenate((self.ztail, z))
+        t = (self.n0 - len(self.ztail) + np.arange(len(x))) / fs
+        env = []
+        for k in range(8):
+            m = x * np.exp(-2j * np.pi * (c + (k - 3.5) * 250.0) * t)
+            cs = np.concatenate(([0], np.cumsum(m)))
+            mm = np.abs(cs[L:] - cs[:-L])
+            env.append(mm)
+        env = np.asarray(env)
+        idx = np.argmax(env, axis=0).astype(np.float32)
+        # utjämnad position: filtret ligger L sampel efter; svansen ger kontinuitet över styckena
+        self.ztail = x[-(L - 1):] if L > 1 else x[:0]
+        self.n0 += len(z)
+        return idx[-len(z):] if len(idx) >= len(z) else np.concatenate((np.full(len(z) - len(idx), 3.5, np.float32), idx))
 
     def feed(self, z, fs, feat):
         sps = fs / 125.0
         if self.clk is None:
             self.clk = SymClock(sps)
-        lv = self.levels_from(feat, 8, 250)
-        v = self._fi(z, fs, sps / 6)
+        lv = np.arange(8, dtype=float)
+        v = self._toner8(z, fs, feat)
         out = []
         for k in self.clk.run(v, lv):
             for o in (0, 1):
