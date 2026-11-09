@@ -7,7 +7,9 @@
 - **De är inte samma sorts sak.** DragonOS och SigintOS är hela Linuxdistributioner som samlar andras program. Signalspanaren är ett enda program med egen kod. Därför går "deras kod" inte att jämföra rad för rad. Det mesta i DragonOS är skrivet av andra projekt (GNU Radio, SDR++, SDRangel, rtl_433 med flera).
 - **Stabilitet:** De enskilda verktygen i DragonOS är mer beprövade än våra egna avkodare, eftersom tusentals använder dem på riktiga signaler. Helheten i DragonOS hänger däremot löst ihop: varje verktyg har sitt eget gränssnitt och sina egna fel. SigintOS har sämre rykte. Användare rapporterar att GUI:t inte fungerar och att LTE-delarna är låsta bakom kontakt med utvecklaren.
 - **Analysverktyg:** Signalspanaren är **bättre på automatisk igenkänning** av okända signaler. Varken DragonOS eller SigintOS har en inbyggd motsvarighet till vår modulationsigenkänning med bevismotor, signaldatabas och facit-mätning. DragonOS har däremot **fler och bättre manuella verktyg** (inspectrum, Universal Radio Hacker) och **många fler avkodare**.
-- **Det vi saknar mest:** stöd för fler SDR:er och bredare band, fler avkodare (VDL2, HFDL, rtl_433, satelliter, FT8) och trunking/digitalt tal. Se listan längst ner.
+- **Det vi saknar mest:** stöd för fler SDR:er och bredare band, fler avkodare (VDL2, HFDL, rtl_433, satelliter, FT8) och trunking/digitalt tal. Se avsnitt 5.
+
+**Innehåll:** 1–5 jämförelsen med DragonOS och SigintOS · 6 plan för analysens svagheter · 7 andra program för signalanalys och regler för att ta in kod · 8 idébank · 9 där Signalspanaren redan är bäst.
 
 ## 1. Vad de tre är
 
@@ -247,7 +249,52 @@ Signalspanaren är GPL-3.0-or-later.
 4. **Artemis**: jämför med `signaldb.py` när licensen för sigidwiki är klar.
 5. **go2MONITOR och WAVECOM**: läs databladen för att sätta mål.
 
-## 8. Där Signalspanaren redan är bäst
+## 8. Idébank
+
+Idéer som inte är beslutade eller planerade. De samlas här för att väljas ut senare. Kolumnen **Vald** bockas av när en idé flyttas till planen i avsnitt 6.
+
+### Analys
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 1 | Följa frekvensdrift | Analysen följer en signal vars frekvens sakta glider, som SigDigger gör (`drift.c` i Suscan). Hjälper på långa HF-sändningar och billiga sändare. | [ ] |
+| 2 | Kort fingeravtryck per signal | En kompakt sammanfattning av mätvärdena (symboltakt, shift, bandbredd och ramlängd). Med den kan man söka "har jag hört den här förut?" i loggen, även på en annan frekvens. | [ ] |
+| 3 | Tidsschema per station | Loggen lär sig när en frekvens brukar vara aktiv, till exempel DWD-fax varje hel timme. Analysen använder det som förkunskap, på samma sätt som bandplanen i `bevis.py`. | [ ] |
+| 4 | Jämföra två signaler sida vid sida | Båda konstellationerna och spektrumen bredvid varandra. | [ ] |
+| 5 | Förklaring av beslutet i klartext | Raden Grund utökas till en lista: "+ bandbredd 2,7 kHz passar STANAG, − ramlängd stämmer inte". | [ ] |
+
+### Mottagning
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 6 | Flera KiwiSDR samtidigt | Samma frekvens från två mottagare jämförs. Det skiljer en störning vid dongeln från en riktig signal och ger en grov riktning till sändaren med TDoA, som KiwiSDR själv stöder. | [ ] |
+| 7 | Övervakning utan att någon tittar | Bevaka en lista med frekvenser och spara IQ-klipp med analysresultat när något nytt dyker upp. Ger också facit-klipp till steg 1 i planen. | [ ] |
+| 8 | Kalibrering av frekvensfel automatiskt | Använd en känd sändare (DCF77, en GSM-cell eller en rundradiostation) och rätta dongelns ppm. | [ ] |
+
+### Data och delning
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 9 | Export till format som andra läser | SigMF med analysens resultat som annoteringar, så att filen kan öppnas i IQEngine eller inspectrum med markeringarna kvar. | [ ] |
+| 10 | Import av Artemis-databasen | Valfritt och efter kontroll av sigidwikis licens. Användaren laddar ner den själv, så att vi inte sprider data. | [ ] |
+| 11 | Egna signalpaket | En användare kan dela en JSON-fil med egna signaler och flaggor, till exempel "svenska kustradiostationer". | [ ] |
+
+### Användbarhet
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 12 | Guidat läge för nybörjare | "Vad är det här?" ger en kort förklaring av signaltypen och en länk till sigidwiki. | [ ] |
+| 13 | Ljudexempel i signaldatabasen | Man kan lyssna på hur en typ ska låta. | [ ] |
+| 14 | Mobilvänligt webbgränssnitt med inloggning | Lyssna på stationen hemma från telefonen. | [ ] |
+
+### Kvalitet
+
+| # | Idé | Beskrivning | Vald |
+|---|---|---|---|
+| 15 | Utvärdering av AI-svaren | Spara svaren från AI-chatten tillsammans med facit och mät hur ofta AI:n har rätt. Kopplat till "AI-chatten: kortare svar" i att göra-listan i `docs/ÄNDRINGSLOGG.md`. | [ ] |
+| 16 | Rapport om fel klassningar | När användaren rättar analysen med "Klassa själv" sparas klippet som ett fall till `analystest.py`, lokalt och med användarens godkännande. | [ ] |
+
+## 9. Där Signalspanaren redan är bäst
 
 - Ett program där allt hänger ihop: vattenfall, skanner, logg, analys, avkodning och kartor delar samma data.
 - Automatisk klassning med bevismotor, bandplan som förkunskap och signaldatabas. Det har ingen av de andra.
