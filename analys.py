@@ -1375,26 +1375,43 @@ ITA2_FIGS = "\x003\n- '87\r\x054\x07,!:(5+)2#6019?&\x0e./=\x0f"
 
 
 class RttyAvkodare(Avkodare):
-    """Baudot/ITA2-RTTY: 1 startbit, 5 databitar (LSB först), 1–2 stoppbitar."""
+    """Baudot/ITA2-RTTY: 1 startbit, 5 databitar (LSB först), 1–2 stoppbitar.
+
+    Avkodaren lär sig signalen själv och använder analysens mätvärden bara som utgångspunkt:
+    1. Tonerna: mitten finjusteras ur spektrumet (det tonpar med rätt shift som har mest energi),
+       shiften avrundas till en standard (170/200/425/450/850 Hz).
+    2. Tvåtonsdetektor: ett filter per ton (ungefär en bit långt) i stället för frekvens-
+       diskriminator – tål brus mycket bättre. Varje tons nivå normeras för sig (ATC), så
+       selektiv fädning (mark och space fädar olika) inte flyttar beslutsgränsen.
+    3. Ramsynk körs parallellt för alla standardtakter och båda polariteterna; den som ramar
+       bäst skrivs ut. Ett tillfälligt fel i analysens takt nollställer alltså ingenting."""
     namn = "RTTY (Baudot/ITA2)"
     STD = (45.45, 50.0, 75.0, 100.0)
+    SHIFTAR = (170.0, 200.0, 425.0, 450.0, 850.0)
+    RR = 2400.0        # Hz, arbetstakt
+    HIST_S = 4.0       # s historik
+    ATC_S = 0.6        # s, fönster för tonernas nivå
+    MIN_OK = 0.45      # poäng (andel godkända ramar × bitarnas tydlighet) som krävs för att skriva ut
+    MIN_SNR = 3.0      # dB, tonparet måste synas över bruset
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.key = None
-        self.prev = None
-        self.thr = 0.0
-        self.dtail = np.zeros(0, np.float32)
-        self.sig = np.zeros(0, np.float32)
-        self.m = [self._mk(), self._mk()]     # två polariteter
+        self.acc = np.zeros(0, np.complex64)
+        self.y = np.zeros(0, np.complex64)
+        self.base = 0                     # absolut index för y[0]
+        self.c = None                     # tonparets mitt (Hz)
+        self.snr = 0.0                    # tonparets nivå över bruset (dB)
+        self.sh = None                    # shift (Hz)
+        self.fr = {(b, p): self._mk() for b in self.STD for p in (0, 1)}
         self.best = None
-        self.emitted = [0, 0]
+        self.baud = None
+        self.synkat = False               # har haft synk (då spelas inte gammal text upp igen)
 
     @staticmethod
     def _mk():
-        return {"ok": 0, "err": 0, "hist": deque(maxlen=40), "text": [], "figs": False, "pos": 0}
+        return {"hist": deque(maxlen=30), "text": [], "figs": False, "pos": None, "emit": 0, "ok": 0, "q": 0.0}
 
     def passar(self, feat):
         b, s = feat.get("baud"), feat.get("shift")
@@ -1402,85 +1419,168 @@ class RttyAvkodare(Avkodare):
             return False                 # SITOR-B/NAVTEX-signatur (fasningen ser ut som 50 Bd) – sköts av NAVTEX
         return feat.get("fam") == "FSK2" and b and 40 <= b <= 115 and s and 60 <= s <= 1100
 
+    def har_synk(self):
+        return self.best is not None
+
+    # ── 1. tonerna ────────────────────────────────────────────────────
+    def _toner(self, feat):
+        RR = self.RR
+        sh = feat.get("shift") if feat else None
+        if feat and feat.get("fi_peaks") is not None and len(feat["fi_peaks"]) >= 2:
+            p = np.sort(np.asarray(feat["fi_peaks"], float))
+            sh = sh or float(p[-1] - p[0])
+        c0 = float(feat.get("f_mid", 0.0)) if feat else 0.0
+        if self.c is None:
+            self.c = c0
+        n = min(len(self.y), int(RR * 1.5))
+        if n < 256:
+            return
+        nf = 1 << int(math.log2(n))
+        P = np.abs(np.fft.fft(self.y[-nf:] * np.hanning(nf))) ** 2
+        f = np.fft.fftfreq(nf, 1 / RR)
+        o = np.argsort(f)
+        f, P = f[o], _smooth(P[o], max(1, int(round(8.0 / (RR / nf)))))
+        kand = [s for s in self.SHIFTAR if not sh or abs(s - sh) / s < 0.15] or [sh]
+        best = None
+        for s in kand:
+            cc = np.arange(self.c - 60, self.c + 60.1, 1.0)
+            e = np.interp(cc - s / 2, f, P) + np.interp(cc + s / 2, f, P)
+            k = int(np.argmax(e))
+            if best is None or e[k] > best[0]:
+                best = (float(e[k]), float(cc[k]), float(s))
+        e, c, s = best
+        self.c = c if self.sh is None else 0.7 * self.c + 0.3 * c
+        self.sh = s
+        # finns signalen kvar? tonparets energi mot bruset vid sidan om, de senaste 0,6 s
+        n2 = 1 << int(math.log2(max(64, int(RR * 0.6))))
+        P2 = np.abs(np.fft.fft(self.y[-n2:] * np.hanning(n2))) ** 2
+        f2 = np.fft.fftfreq(n2, 1 / RR)
+        o2 = np.argsort(f2)
+        f2, P2 = f2[o2], _smooth(P2[o2], 3)
+        ton = 0.5 * (np.interp(self.c - s / 2, f2, P2) + np.interp(self.c + s / 2, f2, P2))
+        ref = float(np.median(P2[np.abs(f2 - self.c) < max(600.0, s)])) + 1e-30
+        self.snr = 10 * math.log10(max(float(ton), 1e-30) / ref)
+
+    # ── 2. tvåtonsdetektor med ATC ────────────────────────────────────
+    def _beslut(self, baud):
+        RR = self.RR
+        t = (self.base + np.arange(len(self.y))) / RR
+        L = max(1, int(round(0.9 * RR / baud)))
+        W = max(3, int(self.ATC_S * RR))
+        a = []
+        for f in (self.c + self.sh / 2, self.c - self.sh / 2):     # mark = högre tonen
+            m = self.y * np.exp(-2j * np.pi * f * t)
+            m = _smooth(m.real, L) + 1j * _smooth(m.imag, L)
+            env = np.abs(m)
+            a.append((env, _smooth(env, W)))
+        (am, mm), (as_, ms) = a
+        mm = np.maximum(mm, 0.25 * ms) + 1e-12      # en ton kan inte vara mycket svagare än den andra
+        ms = np.maximum(ms, 0.25 * mm) + 1e-12      # i längden (annars tomgång: bara mark)
+        return (am / mm - as_ / ms).astype(np.float32)
+
+    # ── 3. ramsynk ────────────────────────────────────────────────────
     def feed(self, z, fs, feat):
-        baud = feat.get("baud")
-        if len(z) == 0 or not baud or feat.get("fi_peaks") is None:
-            return ""                    # mätningen saknar symboltakt/toner (t.ex. överskriven av en annan avkodare)
-        for sb in self.STD:
-            if abs(baud - sb) / sb < 0.05:
-                baud = sb
-        tones = np.sort(np.asarray(feat["fi_peaks"])) + feat.get("f_mid", 0.0)
-        thr = float(tones.mean()) if len(tones) >= 2 else feat.get("f_mid", 0.0)
-        key = round(baud, 2)
-        if key != self.key:
-            self.key = key
-            self.sig = np.zeros(0, np.float32)
-            self.dtail = np.zeros(0, np.float32)
-            self.thr = thr
-            for m in self.m:
-                m["pos"] = 0
-        self.baud = baud
-        self.thr = self.thr * 0.7 + thr * 0.3
-        if self.prev is not None:
-            z = np.concatenate(([self.prev], z))
-        self.prev = z[-1]
-        d = (np.angle(z[1:] * np.conj(z[:-1])) * fs / (2 * np.pi)).astype(np.float32)
-        sps = fs / baud
-        K = int(sps)                         # utjämningen behöver lite historik över skarven
-        dd = np.concatenate((self.dtail, d))
-        v = _smooth(dd, sps / 3).astype(np.float32)[len(self.dtail):]
-        self.dtail = dd[-K:]
-        self.sig = np.concatenate((self.sig, v))
-        for pol in (0, 1):
-            x = self.sig - self.thr
-            self.m[pol]["pos"] = self._run(self.m[pol], x if pol == 0 else -x, sps)
-        cut = min(m["pos"] for m in self.m)
-        self.sig = self.sig[cut:]
-        for m in self.m:
-            m["pos"] -= cut
-        # välj polaritet med bäst ramning
-        sc = [(m["hist"].count(True) / max(1, len(m["hist"]))) if len(m["hist"]) >= 8 else 0 for m in self.m]
-        best = int(np.argmax(sc)) if max(sc) >= 0.7 else None
-        if best is None:
+        if len(z) == 0:
             return ""
-        if best != self.best:
-            self.best = best
-            self.emitted[best] = max(0, len(self.m[best]["text"]) - 20)
-        t = self.m[best]["text"]
-        new = "".join(t[self.emitted[best]:])
-        self.emitted[best] = len(t)
-        if len(t) > 5000:
-            del t[:4000]
-            self.emitted[best] = len(t)
+        k = max(1, int(round(fs / self.RR)))
+        self.RR = fs / k
+        x = np.concatenate((self.acc, np.asarray(z, np.complex64)))
+        n = len(x) // k
+        self.acc = x[n * k:]
+        if n == 0:
+            return ""
+        self.y = np.concatenate((self.y, x[:n * k].reshape(n, k).mean(axis=1)))
+        self._toner(feat)
+        if self.sh is None or len(self.y) < self.RR * 0.5:
+            return ""
+        marg = int(self.ATC_S * self.RR / 2) + 1
+        for b in self.STD:
+            xb = self._beslut(b)
+            gr = len(xb) - marg
+            for p in (0, 1):
+                m = self.fr[(b, p)]
+                if m["pos"] is None or m["pos"] < self.base:
+                    m["pos"] = self.base
+                m["pos"] = self._run(m, xb if p == 0 else -xb, self.RR / b, gr)
+        # välj den ramning som lyckas bäst (med hysteres)
+        sc = {k2: (m["hist"].count(True) / len(m["hist"]) * min(1.0, m["q"]) if len(m["hist"]) >= 10 else 0.0)
+              for k2, m in self.fr.items()}
+        if self.snr < self.MIN_SNR:              # tonerna syns inte längre: skriv inget (brus ger skräp)
+            sc = {k2: 0.0 for k2 in sc}
+        for k2 in sc:                            # normal polaritet är vanligast (RYRY är tvetydigt)
+            if k2[1] == 0 and sc[k2] > 0:
+                sc[k2] += 0.02
+            if sc[k2] > 0 and "RYRY" in "".join(self.fr[k2]["text"][-12:]):
+                sc[k2] += 0.1                    # RYRY (standard i början) avgör polariteten
+        if feat and feat.get("baud"):            # analysens takt: liten fördel – och före första synken
+            for k2 in sc:                        # avgörande (RYRY ramar bra även med fel takt)
+                if abs(k2[0] - feat["baud"]) / k2[0] < 0.08:
+                    sc[k2] += 0.03
+                elif not self.synkat:
+                    sc[k2] *= 0.5
+        top = max(sc, key=sc.get)
+        if sc[top] < self.MIN_OK:
+            top = self.best if (self.best and sc[self.best] >= self.MIN_OK - 0.1) else None
+        elif self.best and top != self.best and sc[self.best] >= sc[top] - 0.1:
+            top = self.best
+        if top != self.best and top is not None:
+            # första synken: ta med de senaste tecknen (början av sändningen); vid byte av
+            # ramning fortsätt där den nya är nu, annars skrivs samma text två gånger
+            m0 = self.fr[top]
+            m0["emit"] = max(0, len(m0["text"]) - 20) if not self.synkat else len(m0["text"])
+            self.synkat = True
+        self.best = top
+        self.baud = top[0] if top else self.baud
+        # släng historik som ingen ramning behöver
+        keep = min(m["pos"] for m in self.fr.values()) - int(self.ATC_S * self.RR) - 1
+        keep = max(keep, len(self.y) + self.base - int(self.HIST_S * self.RR))
+        cut = keep - self.base
+        if cut > 0:
+            self.y = self.y[cut:]
+            self.base += cut
+        if top is None:
+            return ""
+        m = self.fr[top]
+        new = "".join(m["text"][m["emit"]:])
+        m["emit"] = len(m["text"])
+        for mm in self.fr.values():
+            if len(mm["text"]) > 5000:
+                d = len(mm["text"]) - 1000
+                del mm["text"][:d]
+                mm["emit"] = max(0, mm["emit"] - d)
         return new
 
-    def _run(self, m, s, sps):
-        """Kör ramningen över s från m["pos"]; returnerar nästa position."""
-        n = len(s)
-        i = int(m.get("pos", 0))
-        hw = max(1, int(sps * 0.2))
-        frame = int(sps * 7.5)
+    def _run(self, m, s, sps, gr):
+        """Ramning över s (absoluta index via self.base) från m["pos"] till gr; returnerar ny position."""
+        b0 = self.base
+        i = int(m["pos"]) - b0
+        frame = int(sps * 7.6)
         mark = s > 0
 
         def bit(c):
-            c = int(c)
-            return float(s[max(0, c - hw):c + hw + 1].mean()) > 0
+            c = int(round(c))
+            return float(s[c]) > 0 if 0 <= c < len(s) else False
 
-        while i + frame < n:
-            # nästa flank mark → space (startbit)
-            seg = mark[i:n - frame]
+        while i + frame < gr:
+            seg = mark[i:gr - frame]
             edges = np.flatnonzero(seg[:-1] & ~seg[1:])
             if len(edges) == 0:
-                i = n - frame
+                i = gr - frame
                 break
-            j = i + int(edges[0]) + 1
-            if not bit(j + 0.5 * sps) and bit(j + 6.6 * sps):
+            j = i + int(edges[0]) + 1                      # första sampel i startbiten
+            if not bit(j + 0.5 * sps) and bit(j + 6.5 * sps):
                 code = 0
-                for k in range(5):
-                    if bit(j + (1.5 + k) * sps):
-                        code |= 1 << k
-                m["ok"] += 1
+                q = 0.0
+                for kk in range(5):
+                    c = int(round(j + (1.5 + kk) * sps))
+                    v = float(s[c]) if 0 <= c < len(s) else 0.0
+                    q += min(abs(v), 2.0)
+                    if v > 0:
+                        code |= 1 << kk
+                # hur tydliga bitarna är i mitten: vid fel takt hamnar avläsningen nära bitgränserna
+                m["q"] = 0.9 * m["q"] + 0.1 * q / 5
                 m["hist"].append(True)
+                m["ok"] += 1
                 ch = None
                 if code == 0x1B:
                     m["figs"] = True
@@ -1492,19 +1592,19 @@ class RttyAvkodare(Avkodare):
                         m["figs"] = False      # 'unshift on space'
                 if ch and ch not in "\0\r\x05\x07":
                     m["text"].append(ch)
-                i = j + int(sps * 7.0)
+                i = j + int(sps * 6.5)         # mitt i (första) stoppbiten: klarar 1, 1,5 och 2 stoppbitar
             else:
-                m["err"] += 1
                 m["hist"].append(False)
                 i = j + 1
-        return max(0, i)
+        return b0 + max(0, i)
 
     def varden(self):
         if self.best is None:
             return [("RTTY", "söker ramsynk …")]
-        m = self.m[self.best]
+        b, p = self.best
+        m = self.fr[self.best]
         ok = m["hist"].count(True) / max(1, len(m["hist"]))
-        return [("RTTY", f"{self.baud:g} Bd, {'normal' if self.best == 0 else 'omvänd'} polaritet"),
+        return [("RTTY", f"{b:g} Bd, {self.sh:.0f} Hz, {'normal' if p == 0 else 'omvänd'} polaritet"),
                 ("Ramar rätt", f"{ok * 100:.0f} %")]
 
 
