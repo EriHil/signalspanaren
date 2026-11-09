@@ -5524,7 +5524,7 @@ def run_gui(args):
 
     class MainWindow(Adw.ApplicationWindow):
         def __init__(self, app, conf, args):
-            super().__init__(application=app, title=APP_NAME)
+            super().__init__(application=app, title=f"{APP_NAME} {VERSION}")
             self.conf = conf
             self.args = args
             self.engine = Engine()
@@ -5736,6 +5736,9 @@ def run_gui(args):
             hb.pack_start(self.mode_dd)
 
             box = Gtk.Box(spacing=8)
+            ver_lbl = Gtk.Label(label=f"v{VERSION}")
+            ver_lbl.add_css_class("dim-label")
+            box.append(ver_lbl)
             self.level_bar = Gtk.LevelBar(min_value=0, max_value=120)
             self.level_bar.set_size_request(160, -1)
             self.level_bar.set_valign(Gtk.Align.CENTER)
