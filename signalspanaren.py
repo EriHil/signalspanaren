@@ -888,24 +888,12 @@ class SimSource(BaseSource):
         self.ais_t0 = time.monotonic()
         self.low = [(99.9e6 + off, sig, amp) for off, _n, sig, amp in analys.test_signals(48000)]
         self.low.append((99.9e6, analys.make_morse(48000, "CQ CQ DE SM5SIM SM5SIM PSE K   ", 20), 0.05))
-        # CW från CW-generatorn, på riktiga band: 40 m:s CW-del (7,0155–7,0395 MHz) med QSO,
-        # fyr, överlappande stationer, contest m.m., och en FAV22-lik station med träningsgrupper
-        # parallellt på 3881 och 6825 kHz (som den riktiga) – att öva Morse-avkodaren på
-        try:
-            self.low.append((7.0275e6, _sim_cw_band(48000), 0.05))
-            fav = _sim_fav22(48000)
-            self.low += [(3.881e6, fav, 0.05), (6.825e6, fav, 0.03)]
-        except Exception:
-            log.exception("Simulatorns CW-signaler kunde inte skapas")
-        # RTTY från RTTY-generatorn: DWD-lik väderstation (50 Bd/450 Hz, selektiv fädning) på
-        # 10,1008 och 4,583 MHz, amatör-RTTY på 20 m (QSO 14,083, contest 14,0865 MHz)
-        try:
-            dwd = _sim_rtty(48000, "dwd")
-            self.low += [(10.1008e6, dwd, 0.05), (4.583e6, dwd, 0.03),
-                         (14.083e6, _sim_rtty(48000, "amator"), 0.04),
-                         (14.0865e6, _sim_rtty(48000, "contest"), 0.06)]
-        except Exception:
-            log.exception("Simulatorns RTTY-signaler kunde inte skapas")
+        # CW och RTTY från generatorerna, på riktiga band – skapas i bakgrunden (några sekunder),
+        # så att simulatorn startar direkt; signalerna dyker upp när de är klara:
+        # 40 m CW (7,0185–7,0395 MHz) med QSO, fyr, överlappande stationer, contest m.m., en FAV22-lik
+        # station med träningsgrupper på 3881 och 6825 kHz, DWD-lik RTTY (50 Bd/450 Hz) på 10,1008 och
+        # 4,583 MHz och amatör-RTTY på 20 m (14,083 och 14,0865 MHz)
+        threading.Thread(target=self._skapa_generatorsignaler, daemon=True, name="sim-generatorer").start()
         V = analysavkodare
         silence = np.zeros(48000 * 3, np.complex64)
         self.low += [
@@ -923,6 +911,24 @@ class SimSource(BaseSource):
         self._lowcache = {}
         self._take()
         log.info("Simulatorn startad")
+
+    def _skapa_generatorsignaler(self):
+        nya = []
+        try:
+            nya.append((7.0275e6, _sim_cw_band(48000), 0.05))
+            fav = _sim_fav22(48000)
+            nya += [(3.881e6, fav, 0.05), (6.825e6, fav, 0.03)]
+        except Exception:
+            log.exception("Simulatorns CW-signaler kunde inte skapas")
+        try:
+            dwd = _sim_rtty(48000, "dwd")
+            nya += [(10.1008e6, dwd, 0.05), (4.583e6, dwd, 0.03),
+                    (14.083e6, _sim_rtty(48000, "amator"), 0.04),
+                    (14.0865e6, _sim_rtty(48000, "contest"), 0.06)]
+        except Exception:
+            log.exception("Simulatorns RTTY-signaler kunde inte skapas")
+        self.low = self.low + nya          # ny lista (inte append): läsningen itererar över den gamla
+        log.info("Simulatorns CW- och RTTY-signaler klara (%d)", len(nya))
 
     def read(self):
         self._take()

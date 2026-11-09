@@ -15,6 +15,7 @@ och returnerar ny klartext. Hela meddelanden läggs i .msgs och visas i fliken A
 Tabeller: SITOR-B från fldigi (GPL), ALE från MIL-STD-188-141B appendix A.
 """
 import time
+from collections import deque
 
 import numpy as np
 
@@ -1237,15 +1238,18 @@ def make_psk31(fs, text, baud=31.25):
     return out.astype(np.complex64)
 
 
-class PskAvkodare(FiAvkodare):
+class _PskSpar(FiAvkodare):
+    """Ett avkodningsspår för BPSK med fast takt (PskAvkodare kör ett per takt)."""
     namn = "PSK31 / PSK63"
 
-    def __init__(self):
+    def __init__(self, baud=31.25):
+        self.fast_baud = baud
         self.reset()
 
     def reset(self):
         super().reset()
-        self.baud = 31.25
+        self.baud = self.fast_baud
+        self.senaste = deque(maxlen=30)  # giltiga/ogiltiga varicode-tecken, de senaste
         self.fc = None
         self.ph = 0.0
         self.raw = np.zeros(0, np.complex64)
@@ -1257,6 +1261,11 @@ class PskAvkodare(FiAvkodare):
         self.linebuf = ""
         self.ok_chars = 0
         self.bad_chars = 0
+        self.lp = None                   # (fs, takt, filter, tillstånd)
+
+    NB = 4.0           # störningsspärr: nollar sampel starkare än NB × normal nivå
+    LP_SYM = 6.0       # lågpassfiltrets längd i symboler (längre = brantare mot grannar)
+    LP_GRANS = 0.8     # lågpassfiltrets gräns × symboltakten
 
     def passar(self, feat):
         if feat.get("msk"):
@@ -1272,16 +1281,16 @@ class PskAvkodare(FiAvkodare):
     def feed(self, z, fs, feat):
         if len(z) == 0:
             return ""
-        b_meas = feat.get("baud") or 0
-        new_baud = 62.5 if b_meas > 46 or (feat.get("occ_bw") or 0) > 105 else 31.25
-        if abs(new_baud - self.baud) > 1:
-            self.baud = new_baud
-            self.t = None
-            self.tail = np.zeros(0, np.complex64)
         sps = fs / self.baud
+        # störningsspärr: korta pulser långt över signalens normala nivå (knaster) nollas
+        z = np.asarray(z, np.complex64)
+        a_ = np.abs(z)
+        med = float(np.median(a_)) if len(a_) else 0.0      # nivån i just det här stycket: en signal
+        z = np.where(a_ > self.NB * med, 0, z).astype(np.complex64)   # som kommer tillbaka efter QSB är inget knaster
         self.raw = np.concatenate((self.raw, np.asarray(z, np.complex64)))[-int(fs * 2.0):]
         if len(self.raw) >= int(fs * 0.5):
-            f0 = feat.get("f_mid", 0.0)
+            # bärvågen söks kring klicket (analysen kan flytta kanalens mitt mellan flera stationer)
+            f0 = feat.get("klick_off", feat.get("f_mid", 0.0)) if self.fc is None else self.fc
             t_r = np.arange(len(self.raw)) / fs
             zr = self.raw * np.exp(-2j * np.pi * f0 * t_r)
             Z = np.fft.fft(zr)
@@ -1290,19 +1299,28 @@ class PskAvkodare(FiAvkodare):
             zr_lp = np.fft.ifft(Z)
             nf = A._pow2(len(zr_lp) * 2)
             df, s2 = A._power_line(zr_lp, fs, 2, self.baud * 0.9, nf)
-            if s2 >= 8:
+            ref = feat.get("klick_off", feat.get("f_mid", 0.0))
+            if s2 >= 8 and abs(f0 + df - ref) <= 10.0:        # bara bärvågar nära klicket (inte grannen)
                 cand = f0 + df
-                self.fc = cand if self.fc is None else (self.fc * 0.7 + cand * 0.3 if abs(cand - self.fc) < 5 else cand)
+                self.fc = cand if self.fc is None else self.fc * 0.7 + cand * 0.3
         if self.fc is None:
-            self.fc = feat.get("f_mid", 0.0)
+            self.fc = feat.get("klick_off", feat.get("f_mid", 0.0))
         n = len(z)
         w = -2 * np.pi * self.fc / fs
         ph = self.ph + w * np.arange(n)
         y = np.asarray(z, np.complex64) * np.exp(1j * ph).astype(np.complex64)
         self.ph = float((self.ph + w * n) % (2 * np.pi))
+        # lågpassfilter med gränsen vid symboltakten (BPSK31 upptar ±31 Hz): en granne 60 Hz bort
+        # dämpas, vilket det korta glidande medlet inte klarade
+        if self.lp is None or self.lp[0] != fs or self.lp[1] != self.baud:
+            from scipy.signal import firwin, lfilter_zi
+            h = firwin(int(self.LP_SYM * sps) | 1, self.baud * self.LP_GRANS, fs=fs)
+            self.lp = [fs, self.baud, h, lfilter_zi(h, 1.0).astype(np.complex128) * 0]
+        from scipy.signal import lfilter
+        y, self.lp[3] = lfilter(self.lp[2], 1.0, y, zi=self.lp[3])
+        y = y.astype(np.complex64)
         buf = np.concatenate((self.tail, y))
-        sm_w = max(2, int(round(sps * 0.45)))
-        sm = A._smooth(buf.real, sm_w) + 1j * A._smooth(buf.imag, sm_w)
+        sm = buf
         if self.t is None:
             if len(sm) < int(sps * 8):
                 self.tail = buf
@@ -1332,6 +1350,7 @@ class PskAvkodare(FiAvkodare):
                     self.bitbuf = ""
                     if code:
                         ch = VARICODE_DEC.get(code)
+                        self.senaste.append(bool(ch))
                         if ch:
                             self.ok_chars += 1
                             out.append(ch)
@@ -1371,6 +1390,54 @@ class PskAvkodare(FiAvkodare):
             return [(namn, "söker tecken …")]
         tot = self.ok_chars + self.bad_chars
         return [(namn, f"{self.ok_chars} tecken ({100 * self.ok_chars / max(1, tot):.0f} % giltiga varicode)")]
+
+
+class PskAvkodare(FiAvkodare):
+    """PSK31/PSK63: ett spår per takt körs parallellt och det med flest giltiga varicode-tecken
+    bland de senaste vinner. Analysens takt ger bara en liten fördel – brus och grannar gör den
+    uppmätta bredden större och övertonen 62 Bd syns i en PSK31-signal."""
+    namn = "PSK31 / PSK63"
+    TAKTER = (31.25, 62.5)
+    passar = _PskSpar.passar
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        super().reset()
+        self.spar = {b: _PskSpar(b) for b in self.TAKTER}
+        self.val = self.TAKTER[0]
+
+    def feed(self, z, fs, feat):
+        ut = {b: sp.feed(z, fs, feat) for b, sp in self.spar.items()}
+        poang = {}
+        for b, sp in self.spar.items():
+            h = sp.senaste
+            poang[b] = (sum(h) / len(h) if len(h) >= 5 else 0.0) * min(1.0, len(h) / 15)
+            mb = feat.get("baud") or 0
+            if mb and abs(mb - b) / b < 0.1:
+                poang[b] += 0.03
+        bast = max(poang, key=poang.get)
+        if poang[bast] > poang[self.val] + 0.1:          # hysteres: byt bara vid tydlig skillnad
+            self.val = bast
+        valt = self.spar[self.val]
+        self.msgs.extend(valt.msgs)
+        for sp in self.spar.values():
+            sp.msgs.clear()
+        return ut[self.val]
+
+    @property
+    def baud(self):
+        return self.val
+
+    def har_synk(self):
+        return self.spar[self.val].har_synk()
+
+    def fakta(self):
+        return self.spar[self.val].fakta()
+
+    def varden(self):
+        return self.spar[self.val].varden()
 
 
 AVKODARE_NYA = [NavtexAvkodare, PocsagAvkodare, AleAvkodare, FaxAvkodare, DmrAvkodare, PskAvkodare]

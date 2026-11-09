@@ -326,7 +326,11 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   python3 analystest.py rtty     mäter RTTY-avkodaren genom hela analyskedjan på scenarierna i
                                  rttygenerator.py (ren, dwd, amator, svag, selektiv, omvand,
                                  drift, trangt, qrn, 75baud, stopp2)
+  python3 analystest.py navtex   mäter NAVTEX/SITOR-B (ren, svag, selektiv, qrn, drift, trangt, mw518)
+  python3 analystest.py psk      mäter PSK31/PSK63 (ren, svag, qsb, fladder, drift, trangt, qrn,
+                                 psk63) med pskgenerator.py
   python3 rttygenerator.py --scen dwd --ut x.wav   syntetisk RTTY med facit (x.txt)
+  python3 pskgenerator.py --scen trangt --ut x.wav syntetisk PSK31 med facit (x.txt)
   python3 cwtrana.py '{"FILTER": [0.4, 0.5, 0.6]}'
                                  tränar Morse-avkodarens inställningar: rutnätssökning mot
                                  fallen i analystest.py morse, generatorns scenarier och de
